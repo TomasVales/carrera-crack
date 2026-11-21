@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, type ReactNode } from "react";
-import type { Club, Look } from "../game/data";
+import type { Team, Look } from "../game/data";
 import { renderAvatar, type Kit } from "../game/draw";
 import { sfx } from "../game/audio";
 
@@ -20,7 +20,7 @@ export function useClubTheme(c1: string, c2: string) {
   }, [c1, c2]);
 }
 
-export function Crest({ club, size = 48 }: { club: Club; size?: number }) {
+export function Crest({ club, size = 48 }: { club: Team; size?: number }) {
   const id = useId().replace(/:/g, "");
   const shield = "M50 4 L92 15 V50 C92 76 73 92 50 101 C27 92 8 76 8 50 V15 Z";
   const p = club.pattern;
@@ -43,6 +43,7 @@ export function Crest({ club, size = 48 }: { club: Club; size?: number }) {
           </>
         )}
         {p === "hoops" && [24, 52, 80].map((y) => <rect key={y} x="0" y={y} width="100" height="12" fill={club.c2} />)}
+        {p === "flag" && <rect x="0" y="36" width="100" height="34" fill={club.c2} />}
         <rect x="0" y="0" width="100" height="30" fill="rgba(0,0,0,.28)" />
       </g>
       <path d={shield} fill="none" stroke="#111" strokeWidth="5" />
@@ -57,7 +58,7 @@ export function Crest({ club, size = 48 }: { club: Club; size?: number }) {
   );
 }
 
-export function Avatar({ look, kit, size = 120, celebrate = false, className = "" }: { look: Look; kit: Kit; size?: number; celebrate?: boolean; className?: string }) {
+export function Avatar({ look, kit, size = 120, celebrate = false, className = "" }: { look: Look; kit: Kit; size?: number; celebrate?: string | false; className?: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const c = ref.current!;

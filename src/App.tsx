@@ -1,34 +1,35 @@
 import { useRef, useState } from "react";
 import { club } from "./game/data";
 import {
-  closeWindow, endSeason, finishMatch, load, openSummerWindow, resolveEvent, retire, save, signFor, startNextSeason, wipe,
+  buy, closeWindow, endSeason, equip, finishMatch, importCareer, loadSlot, openSummerWindow, resolveEvent, retire, save, signFor, startNextSeason, wipeSlot,
   type Career, type MatchOutcome, type Offer, type Report, type SeasonSummary,
 } from "./game/career";
 import { useClubTheme } from "./ui/common";
 import Creator from "./ui/Creator";
-import Hub from "./ui/Hub";
-import MatchScreen from "./ui/MatchScreen";
+import Hub, { type HubActions } from "./ui/Hub";
+import MatchScreen, { PracticeScreen } from "./ui/MatchScreen";
 import { EventScreen, MarketScreen, ResultScreen, RetiredScreen, SeasonEndScreen, TitleScreen } from "./ui/Screens";
 
-type Screen = "title" | "create" | "hub" | "match" | "result" | "event" | "market" | "season" | "retired";
+type Screen = "title" | "create" | "hub" | "match" | "result" | "event" | "market" | "season" | "retired" | "practice";
 
 export default function App() {
-  const [career, setCareerState] = useState<Career | null>(() => load());
-  const ref = useRef(career);
+  const [career, setCareerState] = useState<Career | null>(null);
+  const ref = useRef<Career | null>(null);
   const setCareer = (c: Career | null) => {
     ref.current = c;
     setCareerState(c);
   };
   const [screen, setScreen] = useState<Screen>("title");
+  const [slot, setSlot] = useState(1);
   const [mode, setMode] = useState<"jugar" | "simular">("jugar");
   const [report, setReport] = useState<Report | null>(null);
   const [summary, setSummary] = useState<SeasonSummary | null>(null);
+  const [refresh, setRefresh] = useState(0);
   const [, bump] = useState(0);
 
   const cl = career ? club(career.clubId) : null;
   useClubTheme(cl?.c1 ?? "#15803d", cl?.c2 ?? "#f8fafc");
 
-  /** Copia, modifica, guarda y actualiza. */
   function mutate(fn: (c: Career) => void) {
     const n = structuredClone(ref.current!);
     fn(n);
@@ -37,25 +38,21 @@ export default function App() {
     return n;
   }
 
-  /** ¿Qué pantalla toca después de un partido / evento / mercado? */
   function advance(c: Career) {
+    window.scrollTo(0, 0);
     if (c.retired) return setScreen("retired");
     if (c.pendingEvent) return setScreen("event");
     if (c.offers) return setScreen("market");
     if (c.seasonOver) {
       let s: SeasonSummary | null = null;
-      mutate((n) => {
-        s = endSeason(n);
+      const n = mutate((x) => {
+        s = endSeason(x);
       });
+      void n;
       setSummary(s);
       return setScreen("season");
     }
     setScreen("hub");
-  }
-
-  function startMatch(m: "jugar" | "simular") {
-    setMode(m);
-    setScreen("match");
   }
 
   function matchDone(o: MatchOutcome) {
@@ -76,54 +73,85 @@ export default function App() {
     advance(n);
   }
 
-  if (screen === "title" || !career) {
-    if (screen === "create")
-      return (
-        <Creator
-          onBack={() => setScreen("title")}
-          onDone={(c) => {
-            save(c);
-            setCareer(c);
-            setScreen("hub");
-          }}
-        />
-      );
+  function toTitle() {
+    setCareer(null);
+    setRefresh((x) => x + 1);
+    setScreen("title");
+  }
+
+  const actions: HubActions = {
+    onPlay: () => { setMode("jugar"); setScreen("match"); },
+    onSim: () => { setMode("simular"); setScreen("match"); },
+    onSpend: (k) => mutate((n) => { n.player.stats[k] = Math.min(99, n.player.stats[k] + 1); n.player.points--; }),
+    onFocus: (f) => mutate((n) => { n.player.focus = f; }),
+    onBuy: (id) => { let msg = ""; mutate((n) => { msg = buy(n, id); }); return msg; },
+    onEquip: (id) => mutate((n) => equip(n, id)),
+    onPractice: () => setScreen("practice"),
+    onQuit: toTitle,
+    onImport: (text) => {
+      try {
+        const c = importCareer(text, ref.current?.slotId ?? slot);
+        setCareer(c);
+        setScreen("hub");
+        return null;
+      } catch (e) {
+        return e instanceof Error ? e.message : "No se pudo cargar.";
+      }
+    },
+    onDelete: () => { if (ref.current) wipeSlot(ref.current.slotId); toTitle(); },
+  };
+
+  if (screen === "title" || (!career && screen !== "create")) {
     return (
       <TitleScreen
-        hasSave={!!career && !career.retired}
-        onContinue={() => (career ? advance(career) : undefined)}
-        onNew={() => {
-          if (career && !career.retired && !confirm("¿Empezar una carrera nueva? Se pierde la actual.")) return;
-          wipe();
-          setCareer(null);
+        refresh={refresh}
+        onContinue={(n) => {
+          const c = loadSlot(n);
+          if (!c) return;
+          setSlot(n);
+          setCareer(c);
+          advance(c);
+        }}
+        onNew={(n) => {
+          setSlot(n);
           setScreen("create");
+        }}
+        onDelete={(n) => {
+          wipeSlot(n);
+          setRefresh((x) => x + 1);
         }}
       />
     );
   }
 
+  if (screen === "create")
+    return (
+      <Creator
+        slot={slot}
+        onBack={toTitle}
+        onDone={(c) => {
+          save(c);
+          setCareer(c);
+          setScreen("hub");
+        }}
+      />
+    );
+
+  const c = career!;
   switch (screen) {
-    case "create":
-      return (
-        <Creator
-          onBack={() => setScreen("title")}
-          onDone={(c) => {
-            save(c);
-            setCareer(c);
-            setScreen("hub");
-          }}
-        />
-      );
+    case "practice":
+      return <PracticeScreen c={c} onExit={() => setScreen("hub")} />;
     case "match":
-      return <MatchScreen key={`${career.season}-${career.round}`} c={career} mode={career.player.injured > 0 ? "simular" : mode} onDone={matchDone} />;
+      return <MatchScreen key={`${c.season}-${c.slot}`} c={c} mode={c.player.injured > 0 ? "simular" : mode} onDone={matchDone} />;
     case "result":
-      return <ResultScreen c={career} r={report!} onNext={() => advance(career)} />;
+      return <ResultScreen c={c} r={report!} onNext={() => advance(c)} />;
     case "event":
       return (
         <>
-          <Hub c={career} onPlay={() => undefined} onSim={() => undefined} onSpend={() => undefined} onQuit={() => undefined} />
+          <Hub c={c} actions={actions} locked />
           <EventScreen
-            c={career}
+            key={`${c.season}-${c.slot}-${c.pendingEvent}`}
+            c={c}
             onPick={(i) => {
               let msg = "";
               mutate((n) => {
@@ -131,16 +159,16 @@ export default function App() {
               });
               return msg;
             }}
-            onClose={() => advance(career)}
+            onClose={() => advance(ref.current!)}
           />
         </>
       );
     case "market":
       return (
         <MarketScreen
-          c={career}
+          c={c}
           onChange={() => {
-            save(career);
+            save(c);
             bump((x) => x + 1);
           }}
           onSign={(o: Offer) => afterMarket((n) => signFor(n, n.offers!.find((x) => x.clubId === o.clubId)!))}
@@ -150,7 +178,7 @@ export default function App() {
     case "season":
       return (
         <SeasonEndScreen
-          c={career}
+          c={c}
           s={summary!}
           onNext={() => {
             if (summary!.retire) {
@@ -165,30 +193,8 @@ export default function App() {
         />
       );
     case "retired":
-      return (
-        <RetiredScreen
-          c={career}
-          onNew={() => {
-            wipe();
-            setCareer(null);
-            setScreen("create");
-          }}
-        />
-      );
+      return <RetiredScreen c={c} onNew={() => { wipeSlot(c.slotId); setSlot(c.slotId); setScreen("create"); }} />;
     default:
-      return (
-        <Hub
-          c={career}
-          onPlay={() => startMatch("jugar")}
-          onSim={() => startMatch("simular")}
-          onSpend={(k) =>
-            mutate((n) => {
-              n.player.stats[k] = Math.min(99, n.player.stats[k] + 1);
-              n.player.points--;
-            })
-          }
-          onQuit={() => setScreen("title")}
-        />
-      );
+      return <Hub c={c} actions={actions} />;
   }
 }

@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import {
-  BEARD_NAMES, BOOTS, EYES_NAMES, HAIR_COLORS, HAIR_NAMES, POS_INFO, SKINS, STAT_INFO, STAT_KEYS, overall, randInt,
+  BEARD_NAMES, BOOTS, EYES_NAMES, HAIR_COLORS, HAIR_NAMES, LEAGUES, NATIONS, POS_INFO, SKINS, STAT_INFO, STAT_KEYS, overall, randInt,
   type Foot, type Look, type Pos, type Stats,
 } from "../game/data";
 import { newCareer, startingClubs, type Career } from "../game/career";
-import { Avatar, Bar, Btn, Crest, Stars, clubStars, statColor, useClubTheme } from "./common";
+import { Avatar, Bar, Btn, Crest, Stars, clubStars, ink, statColor, useClubTheme } from "./common";
 
 const POINTS = 10;
 const BASE: Stats = { tiro: 48, pase: 46, regate: 47, velocidad: 50, fisico: 46 };
@@ -32,17 +32,19 @@ function Picker({ label, value, n, onChange, names, colors }: { label: string; v
   );
 }
 
-export default function Creator({ onDone, onBack }: { onDone: (c: Career) => void; onBack: () => void }) {
-  const clubs = useMemo(startingClubs, []);
+export default function Creator({ slot, onDone, onBack }: { slot: number; onDone: (c: Career) => void; onBack: () => void }) {
   const [name, setName] = useState(NAMES[randInt(0, NAMES.length - 1)]);
   const [nick, setNick] = useState(NICKS[randInt(0, NICKS.length - 1)]);
   const [number, setNumber] = useState(10);
   const [pos, setPos] = useState<Pos>("DC");
   const [foot, setFoot] = useState<Foot>("der");
+  const [nation, setNation] = useState("n-arg");
   const [look, setLook] = useState<Look>({ skin: 1, hair: 2, hairColor: 1, beard: 0, eyes: 1, boots: 2 });
   const [add, setAdd] = useState<Stats>({ tiro: 0, pase: 0, regate: 0, velocidad: 0, fisico: 0 });
+  const [leagueId, setLeagueId] = useState("ita");
+  const clubs = useMemo(() => startingClubs(leagueId), [leagueId]);
   const [clubId, setClubId] = useState(clubs[0].id);
-  const club = clubs.find((c) => c.id === clubId)!;
+  const club = clubs.find((c) => c.id === clubId) ?? clubs[0];
   useClubTheme(club.c1, club.c2);
 
   const used = STAT_KEYS.reduce((a, k) => a + add[k], 0);
@@ -57,7 +59,7 @@ export default function Creator({ onDone, onBack }: { onDone: (c: Career) => voi
   }
 
   function start() {
-    onDone(newCareer({ name: name.trim() || "Sin Nombre", nick: nick.trim(), number, pos, foot, look, stats }, clubId));
+    onDone(newCareer({ name: name.trim() || "Sin Nombre", nick: nick.trim(), number, pos, foot, nation, look, stats }, club.id, slot));
   }
 
   return (
@@ -69,7 +71,6 @@ export default function Creator({ onDone, onBack }: { onDone: (c: Career) => voi
       </div>
 
       <div className="grid gap-4 md:grid-cols-[300px_1fr]">
-        {/* Vista previa */}
         <div className="card rise flex flex-col items-center gap-2 p-4 md:sticky md:top-4 md:self-start">
           <div className="relative flex w-full justify-center rounded-2xl bg-gradient-to-b from-emerald-500/40 to-emerald-900/40 pt-4">
             <Avatar look={look} kit={kit} size={220} />
@@ -77,8 +78,9 @@ export default function Creator({ onDone, onBack }: { onDone: (c: Career) => voi
               <div className="title-font text-4xl leading-none">{overall(stats, pos)}</div>
               <div className="text-xs font-black text-white/70">{pos}</div>
             </div>
-            <div className="absolute right-3 top-3">
+            <div className="absolute right-3 top-3 flex flex-col items-center gap-1">
               <Crest club={club} size={40} />
+              <Crest club={NATIONS.find((n) => n.id === nation)!} size={28} />
             </div>
           </div>
           <div className="title-font text-xl">{nick || name}</div>
@@ -86,7 +88,6 @@ export default function Creator({ onDone, onBack }: { onDone: (c: Career) => voi
         </div>
 
         <div className="flex flex-col gap-4">
-          {/* Datos */}
           <section className="card rise grid gap-3 p-4 sm:grid-cols-2">
             <label className="flex flex-col gap-1 text-sm font-bold text-white/60">
               Nombre
@@ -100,7 +101,17 @@ export default function Creator({ onDone, onBack }: { onDone: (c: Career) => voi
               Número
               <input type="number" min={1} max={99} value={number} onChange={(e) => setNumber(Math.max(1, Math.min(99, Number(e.target.value) || 1)))} className="rounded-xl bg-white/10 px-3 py-2 text-base text-white outline-none focus:ring-2 focus:ring-[var(--c1)]" />
             </label>
-            <div className="flex flex-col gap-1 text-sm font-bold text-white/60">
+            <label className="flex flex-col gap-1 text-sm font-bold text-white/60">
+              Selección
+              <select value={nation} onChange={(e) => setNation(e.target.value)} className="rounded-xl bg-white/10 px-3 py-2 text-base text-white outline-none focus:ring-2 focus:ring-[var(--c1)]">
+                {NATIONS.map((n) => (
+                  <option key={n.id} value={n.id} className="bg-slate-900">
+                    {n.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex flex-col gap-1 text-sm font-bold text-white/60 sm:col-span-2">
               Pierna hábil
               <div className="grid grid-cols-3 gap-1">
                 {(["izq", "der", "ambi"] as Foot[]).map((f) => (
@@ -112,7 +123,6 @@ export default function Creator({ onDone, onBack }: { onDone: (c: Career) => voi
             </div>
           </section>
 
-          {/* Posición */}
           <section className="card rise p-4">
             <h2 className="mb-2 font-black">Posición</h2>
             <div className="grid gap-2 sm:grid-cols-3">
@@ -125,7 +135,6 @@ export default function Creator({ onDone, onBack }: { onDone: (c: Career) => voi
             </div>
           </section>
 
-          {/* Aspecto */}
           <section className="card rise grid gap-2.5 p-4">
             <h2 className="font-black">Aspecto</h2>
             <Picker label="Piel" value={look.skin} n={SKINS.length} onChange={setL("skin")} colors={SKINS} />
@@ -136,7 +145,6 @@ export default function Creator({ onDone, onBack }: { onDone: (c: Career) => voi
             <Picker label="Botines" value={look.boots} n={BOOTS.length} onChange={setL("boots")} colors={BOOTS} />
           </section>
 
-          {/* Stats */}
           <section className="card rise p-4">
             <div className="mb-2 flex items-center justify-between">
               <h2 className="font-black">Habilidades</h2>
@@ -160,15 +168,30 @@ export default function Creator({ onDone, onBack }: { onDone: (c: Career) => voi
             </div>
           </section>
 
-          {/* Club */}
           <section className="card rise p-4">
             <h2 className="mb-1 font-black">¿Dónde arrancás?</h2>
-            <p className="mb-3 text-sm text-white/60">Tres clubes chicos de la Lega Stivale te quieren a prueba.</p>
+            <p className="mb-3 text-sm text-white/60">Elegí la liga y uno de los tres clubes chicos que te quieren a prueba.</p>
+            <div className="mb-3 grid grid-cols-3 gap-2">
+              {LEAGUES.map((l) => (
+                <button
+                  key={l.id}
+                  onClick={() => {
+                    setLeagueId(l.id);
+                    setClubId(startingClubs(l.id)[0].id);
+                  }}
+                  className={`btn p-2 text-sm ${leagueId === l.id ? "btn-club" : "btn-ghost"}`}
+                >
+                  <div className="text-2xl">{l.flag}</div>
+                  <div className="leading-tight">{l.name}</div>
+                  <div className="text-[10px] font-semibold opacity-70">{l.vibe}</div>
+                </button>
+              ))}
+            </div>
             <div className="grid gap-2 sm:grid-cols-3">
               {clubs.map((c) => (
-                <button key={c.id} onClick={() => setClubId(c.id)} className={`btn flex items-center gap-3 p-3 text-left ${clubId === c.id ? "ring-4 ring-amber-300" : ""}`} style={{ background: `linear-gradient(135deg, ${c.c1}, ${c.c1}cc 60%, ${c.c2}88)` }}>
+                <button key={c.id} onClick={() => setClubId(c.id)} className={`btn flex items-center gap-3 p-3 text-left ${club.id === c.id ? "ring-4 ring-amber-300" : ""}`} style={{ background: `linear-gradient(135deg, ${c.c1}, ${c.c1}cc 60%, ${c.c2}88)` }}>
                   <Crest club={c} size={40} />
-                  <div style={{ color: c.c1 === "#f8fafc" ? "#111827" : "#fff" }}>
+                  <div style={{ color: ink(c.c1) }}>
                     <div className="leading-tight">{c.name}</div>
                     <div className="text-xs opacity-80">{c.city}</div>
                     <Stars n={clubStars(c.strength)} />
