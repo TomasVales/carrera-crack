@@ -1,7 +1,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { BASE_STRENGTH, CELEBRATIONS, LEAGUES, NATIONS, POS_INFO, SHOP, STAT_INFO, STAT_KEYS, club, fmtMoney, league, type StatKey, type Team } from "../game/data";
 import {
-  ACHIEVEMENTS, AGENTS, MOVES, agentFee, challengeProgress, drillDone, leagueZones, tableZone, agentOf, agentSwitchCost, avgRating, exportCareer, has, marketValue, matchInfo, matchRole, myLeague, myName, ovr, squadOf, stageName, standings, topScorers, xpNeeded, SQUAD_POS, type SquadPos,
+  ACHIEVEMENTS, AGENTS, MOVES, agentFee, ballonRace, fmtCap, stadiumCap, challengeProgress, drillDone, leagueZones, tableZone, agentOf, agentSwitchCost, avgRating, exportCareer, has, marketValue, matchInfo, matchRole, myLeague, myName, ovr, squadOf, stageName, standings, topScorers, xpNeeded, SQUAD_POS, type SquadPos,
   type Career, type Cup, type CupKey, type NewsTag,
 } from "../game/career";
 import { isMuted, setMuted, sfx } from "../game/audio";
@@ -18,7 +18,6 @@ const TABS: { id: Tab; icon: string; name: string }[] = [
   { id: "noticias", icon: "📰", name: "Noticias" },
   { id: "tienda", icon: "🛍️", name: "Tienda" },
   { id: "vitrina", icon: "🏅", name: "Vitrina" },
-  { id: "opciones", icon: "⚙️", name: "Opciones" },
 ];
 
 export type HubActions = {
@@ -49,9 +48,11 @@ export default function Hub({ c, actions, locked = false }: { c: Career; actions
       <header className="card rise flex items-center gap-3 p-3">
         <Crest club={cl} size={46} />
         <div className="min-w-0 flex-1">
-          <div className="title-font truncate text-xl leading-tight">{cl.name}</div>
-          <div className="truncate text-xs font-bold text-white/60">
-            {league(cl.league).flag} {league(cl.league).name} · Temporada {c.season} · {p.age} años
+          <div className="title-font line-clamp-2 break-words text-lg leading-tight sm:truncate sm:text-xl">{cl.name}</div>
+          <div className="text-xs font-bold text-white/60">
+            <span className="block truncate sm:inline">{league(cl.league).flag} {league(cl.league).name}</span>
+            <span className="hidden sm:inline"> · </span>
+            <span className="block truncate sm:inline">T{c.season} · {p.age} años</span>
           </div>
         </div>
         <div className="text-right">
@@ -68,10 +69,22 @@ export default function Hub({ c, actions, locked = false }: { c: Career; actions
         >
           {muted ? "🔇" : "🔊"}
         </button>
+        <button
+          className={`btn h-10 w-10 ${tab === "opciones" ? "btn-club" : "btn-ghost"}`}
+          aria-label="Opciones"
+          title="Opciones"
+          onClick={() => {
+            sfx.click();
+            setTab(tab === "opciones" ? "inicio" : "opciones");
+            window.scrollTo({ top: 0, behavior: "smooth" });
+          }}
+        >
+          ⚙️
+        </button>
       </header>
 
       {/* pestañas: arriba en compu, abajo en el celu */}
-      <nav className="card fixed inset-x-2 bottom-2 z-30 grid grid-cols-8 gap-0.5 p-1 md:static md:inset-auto md:flex md:gap-2 md:p-2">
+      <nav className="card fixed inset-x-2 bottom-2 z-30 grid grid-cols-7 gap-1 p-1 md:static md:inset-auto md:flex md:gap-2 md:p-2">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -201,6 +214,7 @@ function Inicio({ c, actions, go }: { c: Career; actions: HubActions; go: (t: Ta
             ))}
           </div>
         </Card>
+        <BallonCard c={c} />
         <ClubCard c={c} go={go} />
         <Card title={`${league(myLeague(c)).flag} ${league(myLeague(c)).name}`} right={<span className="text-xs font-bold text-white/50">{myPos}° puesto</span>}>
           <MiniTable c={c} leagueId={myLeague(c)} limit={6} />
@@ -890,6 +904,58 @@ function CareerChart({ c }: { c: Career }) {
   );
 }
 
+// ---------- Carrera al Balón de Oro ----------
+
+function BallonCard({ c }: { c: Career }) {
+  const race = ballonRace(c);
+  const wonYears = c.trophies.filter((t) => t.startsWith("🥇 Balón de Oro")).map((t) => t.split("· ")[1]);
+  const top = Math.max(1, ...race.map((r) => r.score));
+  const myPos = race.findIndex((r) => r.me) + 1;
+  const last = c.lastPodium;
+  const lastMe = last ? last.list.findIndex((x) => x.me) + 1 : 0;
+  return (
+    <Card title="🥇 Balón de Oro" right={<span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-black ${wonYears.length ? "bg-amber-400 text-slate-900" : "bg-white/10 text-white/60"}`}>{wonYears.length ? `🏆 ${wonYears.length} · ${wonYears.join(", ")}` : "Nunca lo ganaste"}</span>}>
+      <p className="mb-2 text-xs text-white/60">
+        {c.seasonStats.pj === 0 ? "Arranca la temporada: estos son tus rivales por el premio." : myPos === 1 ? "¡Vas primero! Sostenelo hasta el final." : `Vas ${myPos}° · los títulos se suman al final y pesan mucho.`}
+      </p>
+      <ol className="grid gap-1.5">
+        {race.map((r, i) => (
+          <li key={r.name} className={`rounded-xl px-2.5 py-2 ${r.me ? "bg-[var(--c1)]/30" : "bg-white/5"}`}>
+            <div className="flex items-center gap-2">
+              <span className={`w-5 text-center text-sm font-black ${i === 0 ? "text-amber-300" : "text-white/50"}`}>{i + 1}</span>
+              <Crest club={club(r.clubId)} size={24} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-black">
+                  {r.name}
+                  {r.me && <span className="ml-1 text-[10px] text-amber-300">(vos)</span>}
+                  {r.nemesis && <span className="ml-1 text-[10px] text-rose-300">😈 némesis</span>}
+                </div>
+                <div className="truncate text-[11px] text-white/50">{club(r.clubId).name}</div>
+              </div>
+              <div className="grid grid-cols-4 gap-2 text-center text-[11px]">
+                {[["PJ", r.pj], ["G", r.goals], ["A", r.assists], ["Nota", r.avg ? r.avg.toFixed(1) : "–"]].map(([l, v]) => (
+                  <div key={l as string} className="w-7">
+                    <div className="font-black text-white">{v}</div>
+                    <div className="text-[9px] text-white/40">{l}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="ml-7 mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
+              <div className={`h-full rounded-full ${r.me ? "bg-amber-300" : r.nemesis ? "bg-rose-400" : "bg-white/40"}`} style={{ width: `${Math.max(3, (r.score / top) * 100)}%` }} />
+            </div>
+          </li>
+        ))}
+      </ol>
+      {last && (
+        <p className="mt-2 text-[11px] text-white/45">
+          T{last.season}: 🥇 {last.list[0].name}{last.list[1] ? ` · 🥈 ${last.list[1].name}` : ""}{last.list[2] ? ` · 🥉 ${last.list[2].name}` : ""}{lastMe > 3 ? ` · vos ${lastMe}°` : ""}
+        </p>
+      )}
+    </Card>
+  );
+}
+
 // ---------- Tu club: fuerza que cambia con los resultados ----------
 
 function ClubCard({ c, go }: { c: Career; go: (t: Tab) => void }) {
@@ -918,6 +984,7 @@ function ClubCard({ c, go }: { c: Career; go: (t: Tab) => void }) {
         <div className="flex-1">
           <div className="font-black leading-tight">{me.name}</div>
           <div className="text-xs text-white/50">Fuerza del plantel</div>
+          <div className="truncate text-xs text-white/50">🏟️ {fmtCap(stadiumCap(c, me.id))} lugares</div>
         </div>
         <div className="text-right">
           <div className="title-font text-4xl leading-none">{me.strength}</div>
@@ -985,7 +1052,8 @@ const PITCH: Record<SquadPos, [number, number][]> = {
   ARQ: [[50, 90]],
   DEF: [[14, 70], [38, 74], [62, 74], [86, 70]],
   MED: [[25, 48], [50, 53], [75, 48]],
-  DEL: [[18, 22], [50, 16], [82, 22]],
+  EXT: [[18, 22], [82, 22]],
+  DC: [[50, 16]],
 };
 const ovrColor = (v: number) => (v >= 85 ? "text-amber-300" : v >= 78 ? "text-emerald-300" : v >= 70 ? "text-sky-300" : "text-white/70");
 const short = (n: string) => { const p = n.split(" "); return p.length > 1 ? p.slice(1).join(" ") : n; };
@@ -1002,7 +1070,7 @@ function Plantel({ c }: { c: Career }) {
   const avgStart = Math.round(starters.reduce((a, x) => a + x.ovr, 0) / Math.max(1, starters.length));
   const row = c.leagues[team.league]?.table[clubId];
   const pos = standings(c, team.league).findIndex((r) => r.id === clubId) + 1;
-  const order: SquadPos[] = ["ARQ", "DEF", "MED", "DEL"];
+  const order: SquadPos[] = ["ARQ", "DEF", "MED", "EXT", "DC"];
   const sorted = [...list].sort((a, b) => {
     const k = sort.k;
     const v = k === "pos" ? order.indexOf(a.pos) - order.indexOf(b.pos) || b.ovr - a.ovr : k === "name" ? a.name.localeCompare(b.name) : (a[k] as number) - (b[k] as number);

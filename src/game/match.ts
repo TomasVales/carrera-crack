@@ -35,6 +35,9 @@ export type PlaySetup = {
   drill?: boolean; // minijuego de tiro al blanco (con kind "practica")
   banners?: { text: string; c1: string; c2: string }[]; // banderas en la tribuna
   boo?: boolean; // la tribuna te silba
+  mate?: { name: string; num: number }; // tu compañero en la jugada (del plantel)
+  keeper?: string; // el arquero rival
+  fill?: number; // 0..1 qué tan lleno/grande es el estadio
 };
 
 export const PLAY_NAMES: Record<PlayKind, string> = {
@@ -186,7 +189,8 @@ export class Arcade {
     this.rng = seeded(s.rivalSeed);
     if (s.difficulty !== undefined && s.kind !== "practica") s.rival = clamp(s.rival + (s.difficulty - 1) * 0.2, 0, 1);
     this.setup();
-    for (let i = 0; i < 300; i++) {
+    const people = Math.round(130 + (s.fill ?? 0.7) * 290); // estadios más grandes, tribunas más llenas
+    for (let i = 0; i < people; i++) {
       const c = rand() < 0.45 ? s.crowd[0] : rand() < 0.6 ? s.crowd[1] : pick(["#e5e7eb", "#94a3b8", "#fbbf24", "#1e293b"]);
       this.crowd.push({ x: -300 + rand() * (W + 600), y: -160 + rand() * 135, c, p: rand() * 6 });
     }
@@ -496,7 +500,7 @@ export class Arcade {
     const r = this.rng;
     const rl = () => lookFrom(r);
     const myKit = { ...kit, num };
-    const mateKit = { ...kit, num: 9 };
+    const mateKit = { ...kit, num: this.s.mate?.num ?? 9 };
     const gkKit: Kit = { c1: "#bef264", c2: "#1f2937", num: 1 };
     const j = () => (rand() - 0.5) * 70;
     switch (kind) {
@@ -681,6 +685,7 @@ export class Arcade {
   private pass(from: Ent, errMul = 1) {
     const isMe = from === this.me;
     const target = isMe ? this.mate : this.me;
+    if (isMe && target && this.s.mate) this.popText(`PASE A ${this.s.mate.name.split(" ").slice(-1)[0].toUpperCase()}`, "#e2e8f0");
     from.kick = 0.8;
     if (!target) {
       this.kickTo(from, from.x + 140, from.y, 0.5);
@@ -1191,7 +1196,7 @@ export class Arcade {
           b.curveT = 0;
           this.shake = 6;
           sfx.save();
-          this.finish("atajada", pick(["¡QUÉ ATAJADA!", "¡LA SACÓ!", "¡MANOTAZO!"]), "El arquero se lució", "#93c5fd", 1.6);
+          this.finish("atajada", pick(["¡QUÉ ATAJADA!", "¡LA SACÓ!", "¡MANOTAZO!"]), this.s.keeper ? `${this.s.keeper} se lució` : "El arquero se lució", "#93c5fd", 1.6);
           return;
         }
       }
@@ -1286,7 +1291,7 @@ export class Arcade {
       gk = this.shotTag ?? (this.s.kind === "libre" ? "libre" : this.s.kind === "penal" ? "penal" : b.kind === "chip" ? "vaselina" : b.kind === "curve" ? "comba" : "normal");
       this.goalKinds.push(gk);
     }
-    let sub = byMate ? "¡Asistencia tuya!" : gk === "chilena" ? "¡DE CHILENA! ¡Increíble!" : gk === "cabeza" ? "¡De cabeza!" : b.kind === "chip" ? "¡Qué vaselina!" : b.kind === "curve" ? "¡Con comba al ángulo!" : this.s.epic ? "¡EN EL MINUTO 90!" : this.setPiece ? "¡Golazo de pelota parada!" : "¡La metiste!";
+    let sub = byMate ? (this.s.mate ? `¡Gol de ${this.s.mate.name}! Asistencia tuya` : "¡Asistencia tuya!") : gk === "chilena" ? "¡DE CHILENA! ¡Increíble!" : gk === "cabeza" ? "¡De cabeza!" : b.kind === "chip" ? "¡Qué vaselina!" : b.kind === "curve" ? "¡Con comba al ángulo!" : this.s.epic ? "¡EN EL MINUTO 90!" : this.setPiece ? "¡Golazo de pelota parada!" : "¡La metiste!";
     if (this.s.drill) {
       const t = this.drillTarget;
       const off = b.y - GY;

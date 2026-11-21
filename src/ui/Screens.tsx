@@ -281,6 +281,8 @@ export function SeasonEndScreen({ c, s, onNext }: { c: Career; s: SeasonSummary;
           {s.club.signings.map((x) => <div key={x} className="pop rounded-xl bg-emerald-500/15 px-3 py-2 text-sm font-bold text-emerald-200">✍️ Llega {x}</div>)}
           {s.club.sales.map((x) => <div key={x} className="rounded-xl bg-rose-500/15 px-3 py-2 text-sm font-bold text-rose-200">👋 Se va {x}</div>)}
           {s.club.after === s.club.before && <div className="text-sm text-white/60">El club mantiene el plantel.</div>}
+          {s.club.rival && <div className="rounded-xl bg-orange-500/15 px-3 py-2 text-sm font-bold text-orange-200">⚔️ {s.club.rival} viene a pelearte el puesto</div>}
+          {s.club.stadium && <div className="pop rounded-xl bg-sky-500/15 px-3 py-2 text-sm font-bold text-sky-200">🏟️ ¡Amplían el estadio! {s.club.stadium[0].toLocaleString("es-AR")} → {s.club.stadium[1].toLocaleString("es-AR")} lugares</div>}
         </div>
       )}
       {s.awards.length > 0 && (
@@ -313,6 +315,19 @@ export function SeasonEndScreen({ c, s, onNext }: { c: Career; s: SeasonSummary;
           <b>{s.ballonWinner}</b>
         </div>
       </div>
+      {c.lastPodium && (
+        <div className="card rise grid gap-2 p-4">
+          <div className="font-black">🥇 Votación del Balón de Oro</div>
+          {c.lastPodium.list.map((x, i) => (
+            <div key={x.name} className={`flex items-center gap-3 rounded-xl px-3 py-2 text-sm ${x.me ? "bg-[var(--c1)]/30 font-black" : i === 0 ? "bg-amber-400/15" : "bg-white/5"}`}>
+              <span className="w-6 text-center text-lg">{["🥇", "🥈", "🥉"][i] ?? `${i + 1}°`}</span>
+              <Crest club={club(x.clubId)} size={24} />
+              <span className="min-w-0 flex-1 truncate">{x.name}{x.me ? " (vos)" : ""}</span>
+              <span className="shrink-0 text-xs text-white/60">{x.goals} G · {x.assists} A · {x.avg.toFixed(1)}{x.titles.length ? ` · ${x.titles.length} 🏆` : ""}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {s.achievements.length > 0 && (
         <div className="card rise grid gap-2 p-4">
           <div className="font-black">🏅 Logros nuevos</div>

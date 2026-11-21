@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { STAT_INFO, club, clubsOf, pick, rand, randInt, type Team } from "../game/data";
-import { backgroundScore, crowdContext, drillDone, effStats, matchInfo, matchRole, myName, playedRating, rivalLevel, simulateMine, unlockedMoves, type Career, type MatchOutcome, type Pep } from "../game/career";
+import { backgroundScore, crowdContext, drillDone, effStats, fmtCap, matchCast, matchInfo, matchRole, myName, pickScorer, stadiumCap, playedRating, rivalLevel, simulateMine, unlockedMoves, type Career, type MatchOutcome, type Pep } from "../game/career";
 import { Arcade, type PlayKind, type PlayOutcome, type PlayResult, type Weather } from "../game/match";
 import { sfx } from "../game/audio";
 import { settings, tutorialOn, tutorialPlayed } from "../game/settings";
@@ -91,7 +91,8 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
   const [minute, setMinute] = useState(0);
   const [score, setScore] = useState({ mine: 0, theirs: 0 });
   const [feed, setFeed] = useState<Feed[]>([]);
-  const [play, setPlay] = useState<{ kind: PlayKind; epic: boolean; min: number; decisive?: boolean } | null>(null);
+  const [play, setPlay] = useState<{ kind: PlayKind; epic: boolean; min: number; decisive?: boolean; cast?: ReturnType<typeof matchCast> } | null>(null);
+  const startPlay = (p: { kind: PlayKind; epic: boolean; min: number; decisive?: boolean }) => setPlay({ ...p, cast: matchCast(c, me.id, rv.id, p.kind) });
   const [fast, setFast] = useState(false);
   const [ended, setEnded] = useState(false);
   const [pep, setPep] = useState<Pep | null>(null);
@@ -104,7 +105,7 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
     return { banners: [], boo: false };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const st = useRef({ kinds: [] as string[], moves: [] as string[], idx: 0, minute: 0, mine: 0, theirs: 0, goals: 0, assists: 0, good: 0, bad: 0, epicDone: false, paused: false, finished: false, pensWin: undefined as boolean | undefined, pensDone: false });
+  const st = useRef({ kinds: [] as string[], moves: [] as string[], idx: 0, minute: 0, mine: 0, theirs: 0, goals: 0, assists: 0, good: 0, bad: 0, epicDone: false, paused: false, finished: false, pensWin: undefined as boolean | undefined, pensDone: false, named: { mine: [] as string[], theirs: [] as string[] }, mySimGoals: sim?.goals ?? 0 });
   const fastRef = useRef(false);
   fastRef.current = fast;
 
@@ -140,7 +141,13 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
             if (g.mine) s.mine++;
             else s.theirs++;
             setScore({ mine: s.mine, theirs: s.theirs });
-            push({ min: g.min, text: g.mine ? `¡Gol de ${me.short}!` : `Gol de ${rv.short}`, tone: g.mine ? "good" : "bad" });
+            // tus goles simulados primero salen a tu nombre; el resto, de quien corresponda en cada plantel
+            const left = simGoals.filter((x) => x.mine).length + 1; // goles de tu equipo que faltan (incluye este)
+            const meScored = g.mine && s.mySimGoals > 0 && (s.mySimGoals >= left || rand() < 0.6);
+            if (meScored) s.mySimGoals--;
+            const who = g.mine ? (meScored ? myName(c) : pickScorer(c, me.id)) : pickScorer(c, rv.id);
+            if (!meScored) (g.mine ? s.named.mine : s.named.theirs).push(who);
+            push({ min: g.min, text: g.mine ? `¡Gol de ${me.short}! Lo hizo ${who}` : `Gol de ${rv.short}. Lo hizo ${who}`, tone: g.mine ? "good" : "bad" });
             if (g.mine) { sfx.goal(); sfx.chantBoost(8); }
           }
         } else {
@@ -149,19 +156,23 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
             if (ev.kind === "mine") {
               s.mine++;
               setScore({ mine: s.mine, theirs: s.theirs });
-              push({ min: ev.min, text: `¡Gol de ${me.star}! ${me.short} lo celebra`, tone: "good" });
+              const who = pickScorer(c, me.id);
+              s.named.mine.push(who);
+              push({ min: ev.min, text: `¡Gol de ${who}! ${me.short} lo celebra`, tone: "good" });
               sfx.goal();
               sfx.chantBoost(8);
             } else if (ev.kind === "theirs") {
               s.theirs++;
               setScore({ mine: s.mine, theirs: s.theirs });
-              push({ min: ev.min, text: `Gol de ${rv.name}. Lo hizo ${rv.star}`, tone: "bad" });
+              const who = pickScorer(c, rv.id);
+              s.named.theirs.push(who);
+              push({ min: ev.min, text: `Gol de ${rv.name}. Lo hizo ${who}`, tone: "bad" });
               sfx.ooh();
             } else if (ev.kind === "talk") {
               push({ min: ev.min, text: pick(TALK), tone: "neutral" });
             } else {
               s.paused = true;
-              setPlay({ kind: ev.play!, epic: false, min: ev.min });
+              startPlay({ kind: ev.play!, epic: false, min: ev.min });
               break;
             }
           }
@@ -172,13 +183,13 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
           if (mode === "jugar" && !s.epicDone && close && (role.role === "titular" || rand() < 0.6)) {
             s.epicDone = true;
             s.paused = true;
-            setPlay({ kind: pick(KINDS[c.player.pos].filter((k) => k !== "defensa" && k !== "posesion")), epic: true, min: 90 });
+            startPlay({ kind: pick(KINDS[c.player.pos].filter((k) => k !== "defensa" && k !== "posesion")), epic: true, min: 90 });
           } else if (m.knockout && s.mine === s.theirs && !s.pensDone) {
             s.pensDone = true;
             if (mode === "jugar") {
               s.paused = true;
               push({ min: "90+", text: "¡Empate! Se define por penales...", tone: "big" });
-              setPlay({ kind: "penal", epic: false, min: 90, decisive: true });
+              startPlay({ kind: "penal", epic: false, min: 90, decisive: true });
             } else {
               s.pensWin = sim?.pensWin;
               push({ min: "P", text: s.pensWin ? `¡${me.short} gana por penales!` : `${rv.short} gana por penales...`, tone: s.pensWin ? "big" : "bad" });
@@ -219,26 +230,27 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
     }
     const txt: Record<PlayOutcome, [string, Feed["tone"]]> = {
       gol: [`¡¡GOL DE ${(c.player.nick || c.player.name).toUpperCase()}!!`, "big"],
-      asist: [`¡Gol! Asistencia de ${c.player.nick || c.player.name}`, "good"],
-      atajada: ["Lo ataja el arquero", "neutral"],
+      asist: [cur.cast?.mate ? `¡Gol de ${cur.cast.mate.name}! Asistencia de ${c.player.nick || c.player.name}` : `¡Gol! Asistencia de ${c.player.nick || c.player.name}`, "good"],
+      atajada: [cur.cast?.keeper ? `¡Lo ataja ${cur.cast.keeper}!` : "Lo ataja el arquero", "neutral"],
       palo: ["¡Pegó en el palo!", "neutral"],
       afuera: ["Remate desviado", "neutral"],
       perdida: ["Perdiste la pelota", "bad"],
       tiempo: ["La jugada se diluye", "neutral"],
       recupero: ["¡Recuperaste la pelota y cortaste el contraataque!", "good"],
-      golrival: [`Gol de ${rv.name} en la contra...`, "bad"],
+      golrival: [`Gol de ${rv.name} en la contra...`, "bad"], // el autor se agrega abajo
       posesion: ["¡Olé, olé! Toque y toque en mitad de cancha", "good"],
     };
     s.kinds.push(...(r.kinds ?? []));
     if (r.outcome === "gol") { s.goals++; s.mine++; }
-    if (r.outcome === "asist") { s.assists++; s.mine++; }
+    if (r.outcome === "asist") { s.assists++; s.mine++; if (cur.cast?.mate) s.named.mine.push(cur.cast.mate.name); }
     if (r.outcome === "tiempo" && cur.kind !== "defensa") s.bad += 0.5;
-    if (r.outcome === "golrival") { s.theirs++; s.bad += 1; sfx.ooh(); }
+    let extra = "";
+    if (r.outcome === "golrival") { s.theirs++; s.bad += 1; sfx.ooh(); const who = pickScorer(c, rv.id); s.named.theirs.push(who); extra = ` Lo hizo ${who}.`; }
     if (r.outcome === "recupero") s.good += 1.5;
     if (r.outcome === "posesion") s.good += 1;
     if (r.outcome === "atajada" || r.outcome === "palo") s.good += 0.5;
     setScore({ mine: s.mine, theirs: s.theirs });
-    push({ min: cur.min, text: `${cur.kind === "libre" ? "Tiro libre: " : cur.kind === "penal" ? "Penal: " : cur.kind === "corner" ? "Córner: " : ""}${txt[r.outcome][0]}`, tone: txt[r.outcome][1] });
+    push({ min: cur.min, text: `${cur.kind === "libre" ? "Tiro libre: " : cur.kind === "penal" ? "Penal: " : cur.kind === "corner" ? "Córner: " : ""}${txt[r.outcome][0]}${extra}`, tone: txt[r.outcome][1] });
     setPlay(null);
     s.paused = false;
   }
@@ -246,12 +258,12 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
   function finish() {
     const s = st.current;
     if (mode === "simular") {
-      onDone(sim!);
+      onDone({ ...sim!, scorers: st.current.named });
       return;
     }
     const hg = m.isHome ? s.mine : s.theirs;
     const ag = m.isHome ? s.theirs : s.mine;
-    onDone({ played: true, hg, ag, goals: s.goals, assists: s.assists, rating: playedRating(s.goals, s.assists, s.good, s.bad, s.mine - s.theirs), pensWin: s.pensWin, kinds: s.kinds, moves: s.moves, pep: pep ?? undefined });
+    onDone({ played: true, hg, ag, goals: s.goals, assists: s.assists, rating: playedRating(s.goals, s.assists, s.good, s.bad, s.mine - s.theirs), pensWin: s.pensWin, kinds: s.kinds, moves: s.moves, pep: pep ?? undefined, scorers: s.named });
   }
 
   if (phase === "intro")
@@ -314,7 +326,7 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
         )
       )}
 
-      {play && <PlayLayer c={c} kind={play.kind} epic={play.epic} decisive={play.decisive} minute={play.min} me={me} rv={rv} home={m.home} weather={weather} derby={m.derby} pep={pep} banners={stands.banners} boo={stands.boo} onEnd={playEnded} />}
+      {play && <PlayLayer c={c} cast={play.cast} kind={play.kind} epic={play.epic} decisive={play.decisive} minute={play.min} me={me} rv={rv} home={m.home} weather={weather} derby={m.derby} pep={pep} banners={stands.banners} boo={stands.boo} onEnd={playEnded} />}
     </div>
   );
 }
@@ -362,7 +374,7 @@ function Walkout({ c, home, away, label, derby, weather, role, crowd, pepOn, pep
       <div className="pop text-xs font-black uppercase tracking-[0.3em] text-white/70">{label}</div>
       {derby && <div className="pop rounded-full bg-orange-500 px-4 py-1 text-sm font-black uppercase tracking-widest shadow-lg">🔥 {derby}</div>}
       <div className="pop title-font text-3xl sm:text-5xl">{derby ? "¡SE JUEGA EL CLÁSICO!" : "¡SALEN LOS EQUIPOS!"}</div>
-      <div className="text-sm text-white/70">{home.stadium} · {WEATHER_TXT[weather]}</div>
+      <div className="text-sm text-white/70">{home.stadium} · {fmtCap(stadiumCap(c, home.id))} personas · {WEATHER_TXT[weather]}</div>
       <div className="flex items-center gap-4 sm:gap-10">
         <div className="rise flex flex-col items-center gap-2" style={{ animationDelay: ".1s" }}>
           <Crest club={home} size={96} />
@@ -401,7 +413,7 @@ function Walkout({ c, home, away, label, derby, weather, role, crowd, pepOn, pep
 
 // ---------- Capa de la jugada ----------
 
-export function PlayLayer({ c, kind, epic, decisive, minute, me, rv, home, weather, derby = null, pep = null, banners, boo, drill, onEnd, onExit }: { c: Career; kind: PlayKind; epic: boolean; decisive?: boolean; minute: number; me: Team; rv: Team; home: Team; weather: Weather; derby?: string | null; pep?: Pep | null; banners?: { text: string; c1: string; c2: string }[]; boo?: boolean; drill?: boolean; onEnd: (r: PlayResult) => void; onExit?: () => void }) {
+export function PlayLayer({ c, cast, kind, epic, decisive, minute, me, rv, home, weather, derby = null, pep = null, banners, boo, drill, onEnd, onExit }: { c: Career; kind: PlayKind; epic: boolean; decisive?: boolean; minute: number; me: Team; rv: Team; home: Team; weather: Weather; derby?: string | null; pep?: Pep | null; banners?: { text: string; c1: string; c2: string }[]; boo?: boolean; drill?: boolean; onEnd: (r: PlayResult) => void; onExit?: () => void; cast?: { mate?: { name: string; num: number }; keeper?: string } }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const arcade = useRef<Arcade | null>(null);
   const touch = useMemo(isTouch, []);
@@ -438,6 +450,9 @@ export function PlayLayer({ c, kind, epic, decisive, minute, me, rv, home, weath
         drill,
         banners,
         boo,
+        fill: Math.max(0.25, Math.min(1, stadiumCap(c, home.id) / 80000)),
+        mate: cast?.mate,
+        keeper: cast?.keeper,
       },
       (r) => {
         if (tutorial) tutorialPlayed();
