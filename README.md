@@ -1,6 +1,6 @@
 # Carrera de Crack ⚽
 
-Juego de fútbol web con **modo carrera**: creá tu jugador "cabezón", debutá a los 17 y llevalo a la gloria hasta el retiro. Todo es inventado: tres ligas (🇮🇹 Lega Stivale, 🇪🇸 Liga Siesta, 🇬🇧 Premier Pudding), sus copas y la Copa de Naciones.
+Juego de fútbol web con **modo carrera**: creá tu jugador "cabezón", debutá a los 17 y llevalo a la gloria hasta el retiro. 12 ligas con clubes reales, copas nacionales, Champions, Europa League, Libertadores, Concachampions, Mundial, Eurocopa, Copa América y Balón de Oro con gala. Proyecto personal: no incluye escudos oficiales (podés cargar los tuyos desde el juego) y los jugadores son inventados.
 
 - **Jugá o simulá** cada partido. Si jugás, salís a la cancha y controlás a tu jugador en las jugadas clave: mano a mano, contraataque, pared, desborde, remate de afuera, **tiros libres con barrera**, **penales**, el épico minuto 90 y el **penal decisivo** de los mata-mata.
 - **Mira** para apuntar, **vaselina**, **tiro con comba**, barridas avisadas que podés saltar, **repetición del gol** en cámara lenta, festejos, clima (lluvia, noche) y bengalas.

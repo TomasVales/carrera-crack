@@ -1,4 +1,6 @@
-// Datos del juego: clubes, ligas y marcas inventadas. Las selecciones usan nombres de países (sin escudos reales).
+// Datos del juego: ligas, clubes y selecciones con sus nombres reales (uso personal).
+// No incluye escudos ni fotos oficiales: los escudos se dibujan con los colores del club
+// y cada jugador puede cargar sus propias imágenes desde el juego.
 
 export type Pos = "DC" | "EXT" | "ENG";
 export type Foot = "der" | "izq" | "ambi";
@@ -12,45 +14,45 @@ export type Look = {
   beard: number;
   eyes: number;
   boots: number;
-  band?: number; // vincha (índice de color) o undefined
+  band?: number;
 };
 
 export type CrestPattern = "stripes" | "half" | "band" | "cross" | "plain" | "hoops" | "flag";
 
-/** Equipo genérico: club o selección. */
 export type Team = {
   id: string;
   name: string;
   short: string;
   c1: string;
   c2: string;
-  alt: [string, string]; // camiseta alternativa
+  alt: [string, string];
   pattern: CrestPattern;
   strength: number;
   star: string;
-  league: string; // id de liga, o "nac" para selecciones
+  league: string; // id de liga, o "nac"
   city: string;
   stadium: string;
+  flag?: string; // selecciones: emoji de bandera
+  confed?: Confed;
 };
 export type Club = Team;
+export type Confed = "UEFA" | "CONMEBOL" | "CONCACAF" | "CAF" | "AFC";
 
-export type League = { id: string; name: string; country: string; flag: string; vibe: string };
+export type League = { id: string; name: string; country: string; flag: string; vibe: string; cup: string; region: "eu" | "sa" | "na" | "tr" };
 
 export const POS_INFO: Record<Pos, { name: string; desc: string }> = {
-  DC: { name: "Delantero centro", desc: "Vive en el área. Más mano a mano y definiciones." },
+  DC: { name: "Delantero centro", desc: "Vive en el área. Más mano a mano, cabezazos y definiciones." },
   EXT: { name: "Extremo", desc: "Rápido por la banda. Más contraataques y desbordes." },
-  ENG: { name: "Enganche", desc: "La pausa y el último pase. Más paredes y remates de afuera." },
+  ENG: { name: "Enganche", desc: "La pausa y el último pase. Más toque, paredes y remates de afuera." },
 };
 
 export const STAT_INFO: Record<StatKey, { name: string; short: string; desc: string; train: string; icon: string }> = {
   tiro: { name: "Tiro", short: "TIR", desc: "Potencia y precisión del remate", train: "Definición", icon: "🎯" },
-  pase: { name: "Pase", short: "PAS", desc: "Precisión de pases y centros", train: "Rondos de pase", icon: "🎯" },
+  pase: { name: "Pase", short: "PAS", desc: "Precisión de pases y centros", train: "Rondos de pase", icon: "🦶" },
   regate: { name: "Regate", short: "REG", desc: "Pelota pegada al pie, amagues", train: "Conos y gambeta", icon: "🌀" },
   velocidad: { name: "Velocidad", short: "VEL", desc: "Velocidad máxima", train: "Pasadas de sprint", icon: "⚡" },
-  fisico: { name: "Físico", short: "FIS", desc: "Energía para correr y resistencia", train: "Gimnasio", icon: "💪" },
+  fisico: { name: "Físico", short: "FIS", desc: "Energía, quite y resistencia", train: "Gimnasio", icon: "💪" },
 };
-STAT_INFO.pase.icon = "🦶";
-
 export const STAT_KEYS: StatKey[] = ["tiro", "pase", "regate", "velocidad", "fisico"];
 
 export const SKINS = ["#f8d5b8", "#eebc94", "#d39a6e", "#a86e45", "#7a4a2b", "#4e2f1d"];
@@ -58,7 +60,6 @@ export const HAIR_COLORS = ["#1d1410", "#4a2c17", "#8a5a2b", "#d9a441", "#c2410c
 export const HAIR_NAMES = ["Rapado", "Corto", "Jopo", "Rulos", "Melena", "Cresta", "Rodete"];
 export const BEARD_NAMES = ["Sin barba", "Bigote", "Candado", "Barba"];
 export const EYES_NAMES = ["Tranquilo", "Picante", "Feliz"];
-// 0–6 normales, 7 = sponsor horrible, 8 = dorados, 9 = arcoíris
 export const BOOTS = ["#111827", "#f8fafc", "#ef4444", "#22d3ee", "#facc15", "#a3e635", "#f472b6"];
 export const UGLY_BOOTS = 7;
 export const GOLD_BOOTS = 8;
@@ -74,107 +75,7 @@ export const CELEBRATIONS: Record<string, string> = {
   corazon: "Corazón con las manos",
 };
 
-// ---------- Ligas y clubes (todo inventado) ----------
-
-export const LEAGUES: League[] = [
-  { id: "ita", name: "Lega Stivale", country: "Italia", flag: "🇮🇹", vibe: "Táctica, pasta y catenaccio" },
-  { id: "esp", name: "Liga Siesta", country: "España", flag: "🇪🇸", vibe: "Toque, toque y siesta" },
-  { id: "eng", name: "Premier Pudding", country: "Inglaterra", flag: "🇬🇧", vibe: "Lluvia, barro y pelotazos" },
-];
-
-const T = (league: string, id: string, name: string, short: string, city: string, stadium: string, c1: string, c2: string, pattern: CrestPattern, strength: number, star: string, alt?: [string, string]): Team => ({
-  id, name, short, city, stadium, c1, c2, pattern, strength, star, league, alt: alt ?? [c2, c1],
-});
-
-export const CLUBS: Team[] = [
-  // Lega Stivale
-  T("ita", "ves", "Vesuvio Calcio", "VES", "Nápoles", "Stadio del Vulcano", "#1e3a8a", "#38bdf8", "band", 84, "Gennaro Esposito", ["#f8fafc", "#1e3a8a"]),
-  T("ita", "tor", "Torre Pendente FC", "TOR", "Pisa", "Arena Inclinata", "#f8fafc", "#dc2626", "cross", 80, "Matteo Pendolino", ["#111827", "#dc2626"]),
-  T("ita", "gon", "Gondolieri Venezia", "GON", "Venecia", "Stadio sull'Acqua", "#065f46", "#f97316", "hoops", 77, "Luca Remaioli", ["#f8fafc", "#065f46"]),
-  T("ita", "esp", "Atletico Espresso", "ESP", "Turín", "Caffè Arena", "#3f2a1d", "#f5e6c8", "stripes", 74, "Carlo Moka", ["#f5e6c8", "#3f2a1d"]),
-  T("ita", "tlt", "Real Tortellini", "TLT", "Bolonia", "Stadio Ripieno", "#facc15", "#1d4ed8", "half", 70, "Bruno Ripieno", ["#1d4ed8", "#facc15"]),
-  T("ita", "lam", "Dinamo Lambretta", "LAM", "Milán", "Motodromo", "#15803d", "#f8fafc", "stripes", 66, "Enzo Vespucci", ["#f8fafc", "#15803d"]),
-  T("ita", "moz", "Sporting Mozzarella", "MOZ", "Salerno", "Campo Bufala", "#f8fafc", "#0ea5e9", "plain", 61, "Ciro Bufala", ["#0ea5e9", "#f8fafc"]),
-  T("ita", "pom", "Unione Pomodoro", "POM", "Parma", "Orto Stadium", "#dc2626", "#16a34a", "half", 57, "Dino Passata", ["#f8fafc", "#dc2626"]),
-  // Liga Siesta
-  T("esp", "pae", "Real Paella CF", "PAE", "Valencia", "La Paellera", "#f97316", "#facc15", "band", 85, "Paco Arroz", ["#111827", "#f97316"]),
-  T("esp", "chu", "Atlético Churros", "CHU", "Madrid", "Estadio Chocolate", "#b45309", "#fef3c7", "stripes", 81, "Manolo Azúcar", ["#fef3c7", "#b45309"]),
-  T("esp", "sev", "Sevillanas FC", "SEV", "Sevilla", "Coliseo del Olé", "#f8fafc", "#dc2626", "plain", 76, "Curro Palmas", ["#dc2626", "#f8fafc"]),
-  T("esp", "sie", "Deportivo Siesta", "SIE", "Galicia", "Estadio Hamaca", "#1d4ed8", "#f8fafc", "half", 72, "Iker Bostezo", ["#f8fafc", "#1d4ed8"]),
-  T("esp", "gaz", "Racing Gazpacho", "GAZ", "Cádiz", "El Frigorífico", "#dc2626", "#16a34a", "hoops", 68, "Juanjo Pepino", ["#16a34a", "#f8fafc"]),
-  T("esp", "fla", "Unión Flamenco", "FLA", "Granada", "Tablao Arena", "#7c3aed", "#facc15", "cross", 64, "Lolo Taconeo", ["#facc15", "#7c3aed"]),
-  T("esp", "tor2", "CD Tortilla", "TOT", "Bilbao", "La Sartén", "#fde68a", "#92400e", "plain", 60, "Aitor Patata", ["#92400e", "#fde68a"]),
-  T("esp", "san", "Sporting Sangría", "SAN", "Málaga", "Estadio Jarra", "#9f1239", "#f8fafc", "stripes", 56, "Toni Hielo", ["#f8fafc", "#9f1239"]),
-  // Premier Pudding
-  T("eng", "tea", "Teacup United", "TEA", "Teaford", "The Kettle", "#1e3a8a", "#f8fafc", "plain", 86, "Harry Biscuit", ["#f8fafc", "#1e3a8a"]),
-  T("eng", "cru", "Royal Crumpets", "CRU", "Butterham", "Crumpet Park", "#dc2626", "#facc15", "cross", 82, "Ollie Butter", ["#facc15", "#dc2626"]),
-  T("eng", "fch", "Fish & Chips Rovers", "FCR", "Portsalt", "The Chippy", "#0ea5e9", "#fde047", "hoops", 77, "Jack Vinegar", ["#fde047", "#0ea5e9"]),
-  T("eng", "dd", "Double Decker FC", "DDK", "Londinium", "Bus Station Ground", "#b91c1c", "#111827", "half", 73, "Tommy Ticket", ["#111827", "#b91c1c"]),
-  T("eng", "cor", "Queen's Corgis", "COR", "Waggington", "Kennel Road", "#7c3aed", "#f8fafc", "band", 69, "Rex Woofington", ["#f8fafc", "#7c3aed"]),
-  T("eng", "fog", "Foggy Town", "FOG", "Mistbury", "Cloud Lane", "#64748b", "#f8fafc", "stripes", 65, "Neil Drizzle", ["#f8fafc", "#64748b"]),
-  T("eng", "bis", "Biscuit Albion", "BIS", "Crumbleton", "The Tin", "#a16207", "#f8fafc", "stripes", 60, "Gary Dunk", ["#f8fafc", "#a16207"]),
-  T("eng", "rai", "Rainy City", "RAI", "Puddleford", "Umbrella Arena", "#0f766e", "#f8fafc", "plain", 56, "Danny Puddle", ["#f8fafc", "#0f766e"]),
-];
-
-export const NATIONS: Team[] = [
-  ["arg", "Argentina", "ARG", "#75aadb", "#f8fafc", 84, "Lucho Gambeta"],
-  ["ita", "Italia", "ITA", "#1d4ed8", "#f8fafc", 82, "Marco Muraglia"],
-  ["bra", "Brasil", "BRA", "#facc15", "#16a34a", 85, "Joãozinho Samba"],
-  ["esp", "España", "ESP", "#dc2626", "#facc15", 83, "Pedro Rondo"],
-  ["fra", "Francia", "FRA", "#1e3a8a", "#f8fafc", 84, "Hugo Baguette"],
-  ["uru", "Uruguay", "URU", "#38bdf8", "#111827", 78, "Nacho Garra"],
-  ["ger", "Alemania", "GER", "#f8fafc", "#111827", 82, "Klaus Präzision"],
-  ["eng", "Inglaterra", "ENG", "#f8fafc", "#dc2626", 81, "Wes Header"],
-  ["por", "Portugal", "POR", "#991b1b", "#16a34a", 80, "Rui Bacalhau"],
-  ["ned", "Países Bajos", "NED", "#f97316", "#f8fafc", 79, "Daan Molino"],
-  ["col", "Colombia", "COL", "#facc15", "#1d4ed8", 77, "Juancho Cumbia"],
-  ["mex", "México", "MEX", "#166534", "#f8fafc", 76, "Chuy Picante"],
-].map(([id, name, short, c1, c2, strength, star]) => ({
-  id: `n-${id}`, name: name as string, short: short as string, c1: c1 as string, c2: c2 as string, alt: [c2 as string, c1 as string] as [string, string],
-  pattern: "flag" as const, strength: strength as number, star: star as string, league: "nac", city: name as string, stadium: "Estadio Nacional",
-}));
-
-const ALL = [...CLUBS, ...NATIONS];
-export const club = (id: string): Team => ALL.find((c) => c.id === id)!;
-export const league = (id: string) => LEAGUES.find((l) => l.id === id)!;
-export const clubsOf = (leagueId: string) => CLUBS.filter((c) => c.league === leagueId);
-export const nation = (id: string) => NATIONS.find((n) => n.id === id)!;
-
-// ---------- Tienda ----------
-
-export type ShopItem = {
-  id: string;
-  name: string;
-  emoji: string;
-  price: number; // miles de €
-  kind: "botines" | "festejo" | "vincha" | "vida";
-  desc: string;
-  value?: string | number; // botín/festejo/vincha que aplica
-};
-
-export const SHOP: ShopItem[] = [
-  { id: "b-dorados", name: "Botines dorados", emoji: "👟", price: 400, kind: "botines", value: GOLD_BOOTS, desc: "Brillan con el sol. Pura facha." },
-  { id: "b-arcoiris", name: "Botines arcoíris", emoji: "🌈", price: 250, kind: "botines", value: RAINBOW_BOOTS, desc: "Para que te vean desde la tribuna." },
-  { id: "v-roja", name: "Vincha roja", emoji: "🎽", price: 15, kind: "vincha", value: 0, desc: "Estilo guerrero." },
-  { id: "v-blanca", name: "Vincha blanca", emoji: "🎽", price: 15, kind: "vincha", value: 1, desc: "Clásica de los 90." },
-  { id: "v-negra", name: "Vincha negra", emoji: "🎽", price: 15, kind: "vincha", value: 2, desc: "Seria y elegante." },
-  { id: "v-celeste", name: "Vincha celeste", emoji: "🎽", price: 15, kind: "vincha", value: 3, desc: "Fresca." },
-  { id: "f-avion", name: "Festejo: Avioncito", emoji: "✈️", price: 30, kind: "festejo", value: "avion", desc: "Brazos abiertos y a volar." },
-  { id: "f-rodilla", name: "Festejo: Rodilla al piso", emoji: "🧎", price: 60, kind: "festejo", value: "rodilla", desc: "Deslizarse de rodillas al córner." },
-  { id: "f-oido", name: "Festejo: Mano al oído", emoji: "👂", price: 45, kind: "festejo", value: "oido", desc: "\"No los escucho...\"" },
-  { id: "f-baile", name: "Festejo: Bailecito", emoji: "🕺", price: 80, kind: "festejo", value: "baile", desc: "Coreografía ensayada en el vestuario." },
-  { id: "f-corazon", name: "Festejo: Corazón", emoji: "🫶", price: 40, kind: "festejo", value: "corazon", desc: "Para tu gente." },
-  { id: "chef", name: "Chef personal", emoji: "👨‍🍳", price: 60, kind: "vida", desc: "Recuperás más energía entre partidos." },
-  { id: "pf", name: "Preparador físico privado", emoji: "🏋️", price: 150, kind: "vida", desc: "Tus entrenamientos rinden 50% más." },
-  { id: "depto", name: "Departamento con vista", emoji: "🏙️", price: 350, kind: "vida", desc: "La moral nunca baja de 40." },
-  { id: "psico", name: "Psicólogo deportivo", emoji: "🧠", price: 200, kind: "vida", desc: "Rendís mejor en los partidos importantes." },
-  { id: "auto", name: "Auto deportivo", emoji: "🏎️", price: 900, kind: "vida", desc: "+10 de fama al instante. Ojo con las multas." },
-  { id: "mansion", name: "Mansión con pileta", emoji: "🏰", price: 4000, kind: "vida", desc: "+15 de fama y +10 de moral. Leyenda." },
-  { id: "barrio", name: "Comprar el club de tu barrio", emoji: "🏟️", price: 20000, kind: "vida", desc: "Le devolvés al potrero lo que te dio. +20 de fama." },
-  { id: "isla", name: "Isla privada", emoji: "🏝️", price: 60000, kind: "vida", desc: "Vacaciones eternas: tu moral nunca baja de 60." },
-];
-
-// ---------- Azar y utilidades ----------
+// ---------- Azar ----------
 
 export function rand() {
   return Math.random();
@@ -184,7 +85,6 @@ export const pick = <T,>(xs: T[]): T => xs[Math.floor(Math.random() * xs.length)
 export const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 export const shuffle = <T,>(xs: T[]): T[] => [...xs].sort(() => Math.random() - 0.5);
 
-/** RNG con semilla (caras estables de los rivales). */
 export function seeded(seed: string) {
   let h = 2166136261;
   for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
@@ -208,6 +108,392 @@ export function poisson(lambda: number) {
   return k - 1;
 }
 
+// ---------- Ligas ----------
+
+export const LEAGUES: League[] = [
+  { id: "ita", name: "Serie A", country: "Italia", flag: "🇮🇹", vibe: "Táctica y catenaccio", cup: "Coppa Italia", region: "eu" },
+  { id: "esp", name: "LaLiga", country: "España", flag: "🇪🇸", vibe: "Toque y técnica", cup: "Copa del Rey", region: "eu" },
+  { id: "eng", name: "Premier League", country: "Inglaterra", flag: "🏴󠁧󠁢󠁥󠁮󠁧󠁿", vibe: "Ritmo y lluvia", cup: "FA Cup", region: "eu" },
+  { id: "ger", name: "Bundesliga", country: "Alemania", flag: "🇩🇪", vibe: "Presión y goles", cup: "DFB-Pokal", region: "eu" },
+  { id: "fra", name: "Ligue 1", country: "Francia", flag: "🇫🇷", vibe: "Talento joven", cup: "Coupe de France", region: "eu" },
+  { id: "por", name: "Liga Portugal", country: "Portugal", flag: "🇵🇹", vibe: "Vidriera de cracks", cup: "Taça de Portugal", region: "eu" },
+  { id: "ned", name: "Eredivisie", country: "Países Bajos", flag: "🇳🇱", vibe: "Fútbol total", cup: "KNVB Beker", region: "eu" },
+  { id: "tur", name: "Süper Lig", country: "Turquía", flag: "🇹🇷", vibe: "Estadios que arden", cup: "Copa de Turquía", region: "tr" },
+  { id: "arg", name: "Liga Profesional", country: "Argentina", flag: "🇦🇷", vibe: "Pasión y garra", cup: "Copa Argentina", region: "sa" },
+  { id: "bra", name: "Brasileirão", country: "Brasil", flag: "🇧🇷", vibe: "Jogo bonito", cup: "Copa do Brasil", region: "sa" },
+  { id: "mex", name: "Liga MX", country: "México", flag: "🇲🇽", vibe: "Altura y picante", cup: "Copa MX", region: "na" },
+  { id: "usa", name: "MLS", country: "Estados Unidos", flag: "🇺🇸", vibe: "Show y estrellas", cup: "US Open Cup", region: "na" },
+];
+
+// id|Nombre|ABR|color1|color2|patrón|nivel   (patrón: s=rayas h=mitad b=banda c=cruz p=liso o=aros)
+const RAW: Record<string, string> = {
+  ita: `
+inter|Inter|INT|#0b3d91|#111827|s|86
+nap|Napoli|NAP|#12a0d7|#f8fafc|p|84
+juv|Juventus|JUV|#f8fafc|#111827|s|84
+mil|Milan|MIL|#d1001c|#111827|s|83
+ata|Atalanta|ATA|#1e40af|#111827|s|82
+rom|Roma|ROM|#8e1f2f|#f0bc42|p|80
+laz|Lazio|LAZ|#87d8f7|#f8fafc|p|79
+fio|Fiorentina|FIO|#5b2d8e|#f8fafc|p|78
+bol|Bologna|BOL|#1a2f48|#a21c26|h|78
+tor|Torino|TOR|#8a1e03|#f8fafc|p|74
+como|Como|COM|#1d4f91|#f8fafc|p|73
+udi|Udinese|UDI|#f8fafc|#111827|s|72
+gen|Genoa|GEN|#a6192e|#0b2a4a|h|71
+cag|Cagliari|CAG|#a6192e|#0b2a4a|h|70
+par|Parma|PAR|#f8fafc|#1e3a8a|c|70
+lec|Lecce|LEC|#ffd200|#d71920|s|69
+ver|Hellas Verona|VER|#0b3d91|#ffd200|p|68
+emp|Empoli|EMP|#0b4ea2|#f8fafc|p|68
+mon|Monza|MON|#d71920|#f8fafc|h|68
+ven|Venezia|VEN|#111827|#f97316|b|67`,
+  esp: `
+rma|Real Madrid|RMA|#f8fafc|#d4af37|p|89
+bar|Barcelona|BAR|#a50044|#004d98|s|87
+atm|Atlético de Madrid|ATM|#cb3524|#f8fafc|s|84
+ath|Athletic Club|ATH|#ee2523|#f8fafc|s|80
+vil|Villarreal|VIL|#ffe667|#005187|p|79
+rso|Real Sociedad|RSO|#0067b1|#f8fafc|s|79
+bet|Real Betis|BET|#0bb363|#f8fafc|s|78
+sev|Sevilla|SEV|#f8fafc|#d81920|p|77
+gir|Girona|GIR|#cd2534|#f8fafc|s|77
+val|Valencia|VAL|#f8fafc|#111827|p|75
+cel|Celta de Vigo|CEL|#8ac3ee|#f8fafc|p|74
+osa|Osasuna|OSA|#d91a21|#0a346f|p|74
+ray|Rayo Vallecano|RAY|#f8fafc|#e53027|b|73
+mal|Mallorca|MLL|#e20613|#111827|p|73
+get|Getafe|GET|#005999|#f8fafc|p|72
+ala|Alavés|ALA|#0761af|#f8fafc|s|71
+esy|Espanyol|ESP|#007fc8|#f8fafc|s|71
+lpa|Las Palmas|LPA|#ffe400|#0061a8|p|70
+leg|Leganés|LEG|#f8fafc|#0b4ea2|s|69
+vll|Real Valladolid|VLL|#5b2d8e|#f8fafc|s|68`,
+  eng: `
+mci|Manchester City|MCI|#6cabdd|#f8fafc|p|89
+ars|Arsenal|ARS|#ef0107|#f8fafc|p|88
+liv|Liverpool|LIV|#c8102e|#f8fafc|p|88
+che|Chelsea|CHE|#034694|#f8fafc|p|84
+mun|Manchester United|MUN|#da291c|#111827|p|83
+tot|Tottenham|TOT|#f8fafc|#132257|p|83
+new|Newcastle|NEW|#241f20|#f8fafc|s|82
+avl|Aston Villa|AVL|#670e36|#95bfe5|p|82
+bha|Brighton|BHA|#0057b8|#f8fafc|s|79
+whu|West Ham|WHU|#7a263a|#1bb1e7|p|78
+nfo|Nottingham Forest|NFO|#dd0000|#f8fafc|p|77
+cry|Crystal Palace|CRY|#1b458f|#c4122e|s|76
+bre|Brentford|BRE|#e30613|#f8fafc|s|76
+ful|Fulham|FUL|#f8fafc|#111827|p|76
+bou|Bournemouth|BOU|#da291c|#111827|s|76
+wol|Wolverhampton|WOL|#fdb913|#231f20|p|75
+eve|Everton|EVE|#003399|#f8fafc|p|75
+lei|Leicester City|LEI|#003090|#fdbe11|p|72
+ips|Ipswich Town|IPS|#0033a0|#f8fafc|p|70
+sou|Southampton|SOU|#d71920|#f8fafc|s|70`,
+  ger: `
+bay|Bayern Múnich|FCB|#dc052d|#f8fafc|p|88
+b04|Bayer Leverkusen|B04|#e32221|#111827|p|85
+bvb|Borussia Dortmund|BVB|#fde100|#111827|p|84
+rbl|RB Leipzig|RBL|#f8fafc|#dd0741|p|83
+vfb|Stuttgart|VFB|#f8fafc|#e32219|b|80
+sge|Eintracht Frankfurt|SGE|#e1000f|#111827|p|80
+wob|Wolfsburg|WOB|#65b32e|#f8fafc|p|77
+scf|Freiburg|SCF|#111827|#e2001a|p|77
+bmg|Borussia M'gladbach|BMG|#f8fafc|#0b8c43|p|76
+tsg|Hoffenheim|TSG|#1c63b7|#f8fafc|p|76
+svw|Werder Bremen|SVW|#1d9053|#f8fafc|p|75
+fcu|Union Berlin|FCU|#eb1923|#f8fafc|p|75
+m05|Mainz 05|M05|#c3141e|#f8fafc|p|74
+fca|Augsburg|FCA|#ba3733|#46714d|p|73
+fch|Heidenheim|FCH|#e30613|#003e8a|h|71
+boc|Bochum|BOC|#005ca9|#f8fafc|p|70
+stp|St. Pauli|STP|#6c3b2a|#f8fafc|p|70
+ksv|Holstein Kiel|KSV|#0e5aa7|#f8fafc|p|69`,
+  fra: `
+psg|Paris Saint-Germain|PSG|#004170|#da291c|b|87
+asm|Monaco|ASM|#e51b22|#f8fafc|h|81
+om|Marseille|OM|#f8fafc|#2faee0|p|81
+losc|Lille|LIL|#e01e13|#1e3a8a|p|80
+ol|Lyon|OL|#f8fafc|#1e3a8a|p|80
+ogcn|Nice|NIC|#c8102e|#111827|s|78
+rcl|Lens|RCL|#ffd200|#e51b22|p|77
+srfc|Rennes|REN|#e13327|#111827|p|77
+sb29|Brest|BRE|#e30613|#f8fafc|p|74
+rcsa|Strasbourg|STR|#0075bf|#f8fafc|p|74
+tfc|Toulouse|TFC|#5b2d8e|#f8fafc|p|73
+fcn|Nantes|NAN|#fde100|#0b8c43|p|72
+sdr|Reims|REI|#e30613|#f8fafc|h|72
+aja|Auxerre|AJA|#f8fafc|#0b4ea2|p|70
+sco|Angers|ANG|#111827|#f8fafc|s|69
+hac|Le Havre|HAC|#87ceeb|#1e3a8a|h|69
+asse|Saint-Étienne|ASSE|#009639|#f8fafc|p|69
+mhsc|Montpellier|MHSC|#1e3a8a|#f97316|p|68`,
+  por: `
+slb|Benfica|SLB|#e20e0e|#f8fafc|p|82
+scp|Sporting CP|SCP|#008057|#f8fafc|o|82
+fcp|Porto|FCP|#00428c|#f8fafc|s|81
+scb|Braga|SCB|#e2001a|#f8fafc|p|78
+vsc|Vitória de Guimarães|VSC|#f8fafc|#111827|p|74
+fam|Famalicão|FAM|#1e3a8a|#f8fafc|p|71
+csc|Santa Clara|CSC|#e2001a|#f8fafc|p|70
+cpi|Casa Pia|CPI|#111827|#f8fafc|p|69
+est|Estoril|EST|#ffd200|#0b4ea2|s|69
+rav|Rio Ave|RAV|#0b8c43|#f8fafc|s|69
+mor|Moreirense|MOR|#0b8c43|#f8fafc|p|68
+gil|Gil Vicente|GIL|#e2001a|#0b4ea2|h|68
+aro|Arouca|ARO|#ffd200|#1e3a8a|p|68
+bvs|Boavista|BOA|#111827|#f8fafc|c|67
+nac|Nacional|NAC|#111827|#f8fafc|s|66
+eam|Estrela da Amadora|EAM|#e2001a|#0b8c43|s|66
+avs|AVS|AVS|#e2001a|#f8fafc|p|65
+far|Farense|FAR|#111827|#f8fafc|p|65`,
+  ned: `
+psv|PSV|PSV|#e2001a|#f8fafc|s|81
+aja2|Ajax|AJA|#f8fafc|#d2122e|b|81
+fey|Feyenoord|FEY|#e2001a|#f8fafc|h|81
+az|AZ Alkmaar|AZ|#e2001a|#f8fafc|p|77
+twe|Twente|TWE|#e2001a|#f8fafc|p|77
+utr|Utrecht|UTR|#e2001a|#f8fafc|h|74
+gae|Go Ahead Eagles|GAE|#e2001a|#ffd200|b|71
+nec|NEC Nijmegen|NEC|#e2001a|#0b8c43|s|71
+hee|Heerenveen|HEE|#1e3a8a|#f8fafc|s|70
+spa|Sparta Rotterdam|SPA|#e2001a|#f8fafc|s|69
+for|Fortuna Sittard|FOR|#ffd200|#0b8c43|p|69
+gro|Groningen|GRO|#f8fafc|#0b8c43|p|69
+her|Heracles|HER|#111827|#f8fafc|s|68
+pec|PEC Zwolle|PEC|#1e3a8a|#f8fafc|p|68
+nab|NAC Breda|NAB|#ffd200|#111827|p|68
+wil|Willem II|WIL|#e2001a|#1e3a8a|s|67
+rkc|RKC Waalwijk|RKC|#ffd200|#1e3a8a|p|66
+alm|Almere City|ALM|#e2001a|#111827|p|66`,
+  tur: `
+gs|Galatasaray|GS|#a90432|#fdb912|h|80
+fb|Fenerbahçe|FB|#ffed00|#002d72|s|80
+bjk|Beşiktaş|BJK|#111827|#f8fafc|h|78
+ts|Trabzonspor|TS|#7a1d2e|#5ab5e6|s|75
+ibfk|Başakşehir|IBFK|#ed7d31|#0b3d91|p|73
+sam|Samsunspor|SAM|#e2001a|#f8fafc|p|72
+eyu|Eyüpspor|EYU|#7c3aed|#ffd200|p|71
+goz|Göztepe|GOZ|#ffd200|#e2001a|h|70
+kas|Kasımpaşa|KAS|#0b3d91|#f8fafc|p|70
+ant|Antalyaspor|ANT|#e2001a|#f8fafc|p|70
+aln|Alanyaspor|ALN|#f97316|#0b8c43|p|70
+kon|Konyaspor|KON|#0b8c43|#f8fafc|p|69
+kay|Kayserispor|KAY|#ffd200|#e2001a|p|68
+siv|Sivasspor|SIV|#e2001a|#f8fafc|p|68
+riz|Rizespor|RIZ|#0b8c43|#0b3d91|h|68
+gfk|Gaziantep FK|GFK|#e2001a|#111827|p|68
+hat|Hatayspor|HAT|#7a1d2e|#f8fafc|p|67
+bod|Bodrum FK|BOD|#0b8c43|#f8fafc|p|66`,
+  arg: `
+riv|River Plate|RIV|#f8fafc|#e2001a|b|82
+boc2|Boca Juniors|BOC|#0b3d91|#ffd200|o|82
+rac|Racing Club|RAC|#75aadb|#f8fafc|s|79
+vel|Vélez Sarsfield|VEL|#f8fafc|#0b3d91|b|78
+est2|Estudiantes|EST|#e2001a|#f8fafc|s|77
+ind|Independiente|IND|#e2001a|#f8fafc|p|77
+tal|Talleres|TAL|#0b3d91|#f8fafc|s|77
+sl|San Lorenzo|SLO|#0b3d91|#e2001a|s|76
+arj|Argentinos Juniors|ARJ|#e2001a|#f8fafc|p|75
+lan|Lanús|LAN|#7a1d2e|#f8fafc|p|75
+ros|Rosario Central|ROS|#0b3d91|#ffd200|s|75
+hur|Huracán|HUR|#f8fafc|#e2001a|p|74
+nob|Newell's Old Boys|NOB|#e2001a|#111827|h|73
+dyj|Defensa y Justicia|DYJ|#ffd200|#0b8c43|h|73
+bel|Belgrano|BEL|#75aadb|#f8fafc|p|73
+gcr|Godoy Cruz|GCR|#0b3d91|#f8fafc|s|72
+gim|Gimnasia LP|GIM|#f8fafc|#0b3d91|o|71
+uni|Unión|UNI|#e2001a|#f8fafc|s|71
+tig|Tigre|TIG|#0b3d91|#e2001a|o|71
+pla|Platense|PLA|#f8fafc|#6b3e26|b|71
+ban|Banfield|BAN|#f8fafc|#0b8c43|s|70
+ins|Instituto|INS|#e2001a|#f8fafc|s|70
+atu|Atlético Tucumán|ATU|#75aadb|#f8fafc|s|70
+bcs|Barracas Central|BCS|#e2001a|#f8fafc|p|69
+sar|Sarmiento|SAR|#0b8c43|#f8fafc|p|69
+ccc|Central Córdoba|CCC|#111827|#f8fafc|s|69
+ivr|Independiente Rivadavia|IRV|#0b3d91|#f8fafc|p|69
+rie|Deportivo Riestra|RIE|#111827|#f8fafc|p|68`,
+  bra: `
+fla|Flamengo|FLA|#c8102e|#111827|o|83
+pal|Palmeiras|PAL|#006437|#f8fafc|p|83
+bot|Botafogo|BOT|#111827|#f8fafc|s|80
+spfc|São Paulo|SAO|#f8fafc|#e2001a|o|79
+flu|Fluminense|FLU|#7a0026|#0b8c43|s|79
+cam|Atlético Mineiro|CAM|#111827|#f8fafc|s|79
+int|Internacional|INT|#e2001a|#f8fafc|p|78
+cor|Corinthians|COR|#f8fafc|#111827|p|78
+gre|Grêmio|GRE|#0d80bf|#111827|s|77
+cru|Cruzeiro|CRU|#0b3d91|#f8fafc|p|77
+bah|Bahia|BAH|#0b3d91|#e2001a|h|75
+for2|Fortaleza|FOR|#0b3d91|#e2001a|o|75
+vas|Vasco da Gama|VAS|#111827|#f8fafc|b|75
+rbb|Bragantino|RBB|#f8fafc|#e2001a|p|75
+cap|Athletico Paranaense|CAP|#e2001a|#111827|s|74
+juv2|Juventude|JUV|#0b8c43|#f8fafc|p|71
+vit|Vitória|VIT|#e2001a|#111827|o|71
+cri|Criciúma|CRI|#ffd200|#111827|p|70
+cui|Cuiabá|CUI|#ffd200|#0b8c43|p|70
+acg|Atlético Goianiense|ACG|#e2001a|#111827|s|70`,
+  mex: `
+ame|América|AME|#ffd200|#0b3d91|p|80
+mty|Monterrey|MTY|#0b3d91|#f8fafc|s|80
+tig2|Tigres UANL|TIG|#ffd200|#0b3d91|p|80
+caz|Cruz Azul|CAZ|#0b3d91|#f8fafc|p|79
+tol|Toluca|TOL|#e2001a|#f8fafc|p|77
+gua|Guadalajara|GDL|#e2001a|#f8fafc|s|77
+pac|Pachuca|PAC|#f8fafc|#0b3d91|s|76
+pum|Pumas UNAM|PUM|#0b3d91|#d4af37|p|75
+leo|León|LEO|#0b8c43|#f8fafc|p|75
+san|Santos Laguna|SAN|#0b8c43|#f8fafc|s|72
+tij|Tijuana|TIJ|#e2001a|#111827|s|72
+atl|Atlas|ATL|#e2001a|#111827|h|72
+nec2|Necaxa|NEC|#e2001a|#f8fafc|b|71
+pue|Puebla|PUE|#f8fafc|#0b3d91|b|70
+que|Querétaro|QRO|#111827|#0b3d91|s|69
+maz|Mazatlán|MAZ|#7c3aed|#f8fafc|p|69
+jua|FC Juárez|JUA|#111827|#0b8c43|p|69
+asl|Atlético San Luis|ASL|#e2001a|#0b3d91|p|69`,
+  usa: `
+mia|Inter Miami|MIA|#f7b5cd|#111827|p|78
+lag|LA Galaxy|LAG|#f8fafc|#00245d|b|77
+lafc|LAFC|LAFC|#111827|#c39e6d|p|77
+clb|Columbus Crew|CLB|#ffd200|#111827|p|76
+sea|Seattle Sounders|SEA|#5d9741|#236192|p|75
+cin|FC Cincinnati|CIN|#003087|#fe5000|p|75
+orl|Orlando City|ORL|#61259e|#f8fafc|p|74
+atu2|Atlanta United|ATL|#80000a|#111827|s|74
+phi|Philadelphia Union|PHI|#071b2c|#b1872d|p|74
+nyrb|New York Red Bulls|RBNY|#f8fafc|#ed1e36|p|73
+nyc|New York City FC|NYC|#6cace4|#041e42|p|73
+rsl|Real Salt Lake|RSL|#b30838|#013a81|p|73
+nsh|Nashville SC|NSH|#ece83a|#1f1646|p|72
+por2|Portland Timbers|POR|#00482b|#d69a00|p|72
+hou|Houston Dynamo|HOU|#ff6b00|#101820|p|71
+atx|Austin FC|ATX|#00b140|#111827|p|71`,
+};
+
+const PAT: Record<string, CrestPattern> = { s: "stripes", h: "half", b: "band", c: "cross", p: "plain", o: "hoops" };
+
+// nombres inventados para las figuras de cada club (no son jugadores reales)
+const NAME_POOL: Record<string, [string[], string[]]> = {
+  eu: [["Luca", "Marco", "Pablo", "Hugo", "Leo", "Jonas", "Theo", "Rafa", "Dani", "Nico", "Iker", "Joao", "Kai", "Ruben", "Tim", "Max"], ["Ferretti", "Navarro", "Brooks", "Keller", "Moreau", "Silva", "Van Dijkstra", "Rossi", "Hartmann", "Lambert", "Ortega", "Costa", "Bakker", "Dubois", "Whitmore", "Kaya"]],
+  sa: [["Thiago", "Mateo", "Facu", "Gabriel", "Rodrigo", "Lucas", "Enzo", "Bruno", "Franco", "Vini", "Joaquín", "Pedro"], ["Benítez", "Sosa", "Ferreira", "Gómez", "Alves", "Romero", "Barbosa", "Acosta", "Duarte", "Pereyra", "Lima", "Quiroga"]],
+  na: [["Diego", "Chucho", "Tyler", "Santi", "Jordan", "Luis", "Cole", "Héctor", "Brandon", "Raúl"], ["Hernández", "Miller", "Ruiz", "Carter", "Lozano", "Reyes", "Walker", "Ochoa", "Parker", "Vega"]],
+  tr: [["Emre", "Burak", "Arda", "Kerem", "Mert", "Okan"], ["Yılmaz", "Demir", "Kaya", "Aydın", "Öztürk", "Çelik"]],
+};
+
+function starName(id: string, region: string) {
+  const r = seeded(id);
+  const [a, b] = NAME_POOL[region] ?? NAME_POOL.eu;
+  return `${a[Math.floor(r() * a.length)]} ${b[Math.floor(r() * b.length)]}`;
+}
+
+export const CLUBS: Team[] = LEAGUES.flatMap((l) =>
+  RAW[l.id]
+    .trim()
+    .split("\n")
+    .map((line) => {
+      const [id, name, short, c1, c2, p, s] = line.trim().split("|");
+      return {
+        id, name, short, c1, c2, alt: [c2, c1] as [string, string], pattern: PAT[p] ?? "plain", strength: Number(s),
+        star: starName(id, l.region), league: l.id, city: l.country, stadium: `Estadio del ${name}`,
+      };
+    }),
+);
+
+// ---------- Selecciones ----------
+
+const NAT_RAW: [string, string, string, string, string, number, Confed, string][] = [
+  ["arg", "Argentina", "ARG", "#75aadb", "#f8fafc", 88, "CONMEBOL", "🇦🇷"],
+  ["fra", "Francia", "FRA", "#1e3a8a", "#f8fafc", 88, "UEFA", "🇫🇷"],
+  ["esp", "España", "ESP", "#c60b1e", "#ffc400", 88, "UEFA", "🇪🇸"],
+  ["eng", "Inglaterra", "ENG", "#f8fafc", "#c8102e", 86, "UEFA", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"],
+  ["bra", "Brasil", "BRA", "#ffdf00", "#009c3b", 86, "CONMEBOL", "🇧🇷"],
+  ["por", "Portugal", "POR", "#da291c", "#046a38", 85, "UEFA", "🇵🇹"],
+  ["ger", "Alemania", "GER", "#f8fafc", "#111827", 84, "UEFA", "🇩🇪"],
+  ["ned", "Países Bajos", "NED", "#f36c21", "#f8fafc", 84, "UEFA", "🇳🇱"],
+  ["ita", "Italia", "ITA", "#0066cc", "#f8fafc", 83, "UEFA", "🇮🇹"],
+  ["bel", "Bélgica", "BEL", "#e30613", "#111827", 82, "UEFA", "🇧🇪"],
+  ["cro", "Croacia", "CRO", "#f8fafc", "#e30613", 81, "UEFA", "🇭🇷"],
+  ["uru", "Uruguay", "URU", "#55a8e0", "#111827", 81, "CONMEBOL", "🇺🇾"],
+  ["col", "Colombia", "COL", "#fcd116", "#003893", 80, "CONMEBOL", "🇨🇴"],
+  ["mar", "Marruecos", "MAR", "#c1272d", "#006233", 80, "CAF", "🇲🇦"],
+  ["sui", "Suiza", "SUI", "#d52b1e", "#f8fafc", 78, "UEFA", "🇨🇭"],
+  ["den", "Dinamarca", "DEN", "#c8102e", "#f8fafc", 78, "UEFA", "🇩🇰"],
+  ["usa", "Estados Unidos", "USA", "#f8fafc", "#002868", 77, "CONCACAF", "🇺🇸"],
+  ["mex", "México", "MEX", "#006847", "#f8fafc", 77, "CONCACAF", "🇲🇽"],
+  ["jpn", "Japón", "JPN", "#0b3d91", "#f8fafc", 77, "AFC", "🇯🇵"],
+  ["sen", "Senegal", "SEN", "#f8fafc", "#00853f", 77, "CAF", "🇸🇳"],
+  ["ecu", "Ecuador", "ECU", "#ffd100", "#034ea2", 76, "CONMEBOL", "🇪🇨"],
+  ["aut", "Austria", "AUT", "#ed2939", "#f8fafc", 76, "UEFA", "🇦🇹"],
+  ["tur", "Turquía", "TUR", "#e30a17", "#f8fafc", 76, "UEFA", "🇹🇷"],
+  ["pol", "Polonia", "POL", "#f8fafc", "#dc143c", 75, "UEFA", "🇵🇱"],
+  ["kor", "Corea del Sur", "KOR", "#c60c30", "#f8fafc", 75, "AFC", "🇰🇷"],
+  ["srb", "Serbia", "SRB", "#c6363c", "#f8fafc", 75, "UEFA", "🇷🇸"],
+  ["nga", "Nigeria", "NGA", "#008751", "#f8fafc", 75, "CAF", "🇳🇬"],
+  ["civ", "Costa de Marfil", "CIV", "#f77f00", "#009e60", 74, "CAF", "🇨🇮"],
+  ["egy", "Egipto", "EGY", "#ce1126", "#f8fafc", 74, "CAF", "🇪🇬"],
+  ["sco", "Escocia", "SCO", "#003078", "#f8fafc", 73, "UEFA", "🏴󠁧󠁢󠁳󠁣󠁴󠁿"],
+  ["par", "Paraguay", "PAR", "#d52b1e", "#f8fafc", 73, "CONMEBOL", "🇵🇾"],
+  ["can", "Canadá", "CAN", "#d80621", "#f8fafc", 73, "CONCACAF", "🇨🇦"],
+  ["irn", "Irán", "IRN", "#f8fafc", "#da0000", 73, "AFC", "🇮🇷"],
+  ["aus", "Australia", "AUS", "#ffcd00", "#00843d", 72, "AFC", "🇦🇺"],
+  ["alg", "Argelia", "ALG", "#f8fafc", "#006233", 72, "CAF", "🇩🇿"],
+  ["cmr", "Camerún", "CMR", "#007a5e", "#ce1126", 72, "CAF", "🇨🇲"],
+  ["chi", "Chile", "CHI", "#d52b1e", "#0039a6", 72, "CONMEBOL", "🇨🇱"],
+  ["per", "Perú", "PER", "#f8fafc", "#d91023", 71, "CONMEBOL", "🇵🇪"],
+  ["gha", "Ghana", "GHA", "#f8fafc", "#006b3f", 71, "CAF", "🇬🇭"],
+  ["ksa", "Arabia Saudita", "KSA", "#006c35", "#f8fafc", 70, "AFC", "🇸🇦"],
+  ["crc", "Costa Rica", "CRC", "#ce1126", "#002b7f", 70, "CONCACAF", "🇨🇷"],
+  ["ven", "Venezuela", "VEN", "#7a1d2e", "#ffcc00", 70, "CONMEBOL", "🇻🇪"],
+  ["pan", "Panamá", "PAN", "#da121a", "#f8fafc", 69, "CONCACAF", "🇵🇦"],
+  ["qat", "Catar", "QAT", "#8d1b3d", "#f8fafc", 69, "AFC", "🇶🇦"],
+  ["uzb", "Uzbekistán", "UZB", "#f8fafc", "#1eb53a", 68, "AFC", "🇺🇿"],
+  ["bol", "Bolivia", "BOL", "#007934", "#f8fafc", 67, "CONMEBOL", "🇧🇴"],
+  ["jam", "Jamaica", "JAM", "#ffd100", "#009b3a", 67, "CONCACAF", "🇯🇲"],
+  ["hon", "Honduras", "HON", "#f8fafc", "#0073cf", 66, "CONCACAF", "🇭🇳"],
+  ["uae", "Emiratos Árabes", "UAE", "#f8fafc", "#00732f", 66, "AFC", "🇦🇪"],
+];
+
+export const NATIONS: Team[] = NAT_RAW.map(([id, name, short, c1, c2, strength, confed, flag]) => ({
+  id: `n-${id}`, name, short, c1, c2, alt: [c2, c1] as [string, string], pattern: "flag" as const, strength,
+  star: starName(`n-${id}`, confed === "CONMEBOL" ? "sa" : confed === "CONCACAF" ? "na" : "eu"), league: "nac", city: name, stadium: `Estadio Nacional de ${name}`, flag, confed,
+}));
+
+const ALL = [...CLUBS, ...NATIONS];
+const BY_ID = new Map(ALL.map((t) => [t.id, t]));
+export const club = (id: string): Team => BY_ID.get(id)!;
+export const league = (id: string) => LEAGUES.find((l) => l.id === id)!;
+export const clubsOf = (leagueId: string) => CLUBS.filter((c) => c.league === leagueId);
+export const nation = (id: string) => NATIONS.find((n) => n.id === id)!;
+
+// ---------- Tienda ----------
+
+export type ShopItem = { id: string; name: string; emoji: string; price: number; kind: "botines" | "festejo" | "vincha" | "vida"; desc: string; value?: string | number };
+
+export const SHOP: ShopItem[] = [
+  { id: "b-dorados", name: "Botines dorados", emoji: "👟", price: 400, kind: "botines", value: GOLD_BOOTS, desc: "Brillan con el sol. Pura facha." },
+  { id: "b-arcoiris", name: "Botines arcoíris", emoji: "🌈", price: 250, kind: "botines", value: RAINBOW_BOOTS, desc: "Para que te vean desde la tribuna." },
+  { id: "v-roja", name: "Vincha roja", emoji: "🎽", price: 15, kind: "vincha", value: 0, desc: "Estilo guerrero." },
+  { id: "v-blanca", name: "Vincha blanca", emoji: "🎽", price: 15, kind: "vincha", value: 1, desc: "Clásica de los 90." },
+  { id: "v-negra", name: "Vincha negra", emoji: "🎽", price: 15, kind: "vincha", value: 2, desc: "Seria y elegante." },
+  { id: "v-celeste", name: "Vincha celeste", emoji: "🎽", price: 15, kind: "vincha", value: 3, desc: "Fresca." },
+  { id: "f-avion", name: "Festejo: Avioncito", emoji: "✈️", price: 30, kind: "festejo", value: "avion", desc: "Brazos abiertos y a volar." },
+  { id: "f-rodilla", name: "Festejo: Rodilla al piso", emoji: "🧎", price: 60, kind: "festejo", value: "rodilla", desc: "Deslizarse de rodillas al córner." },
+  { id: "f-oido", name: "Festejo: Mano al oído", emoji: "👂", price: 45, kind: "festejo", value: "oido", desc: "\"No los escucho...\"" },
+  { id: "f-baile", name: "Festejo: Bailecito", emoji: "🕺", price: 80, kind: "festejo", value: "baile", desc: "Coreografía ensayada en el vestuario." },
+  { id: "f-corazon", name: "Festejo: Corazón", emoji: "🫶", price: 40, kind: "festejo", value: "corazon", desc: "Para tu gente." },
+  { id: "chef", name: "Chef personal", emoji: "👨‍🍳", price: 60, kind: "vida", desc: "Recuperás más energía entre partidos." },
+  { id: "pf", name: "Preparador físico privado", emoji: "🏋️", price: 150, kind: "vida", desc: "Tus entrenamientos rinden 50% más." },
+  { id: "depto", name: "Departamento con vista", emoji: "🏙️", price: 350, kind: "vida", desc: "La moral nunca baja de 40." },
+  { id: "psico", name: "Psicólogo deportivo", emoji: "🧠", price: 200, kind: "vida", desc: "Rendís mejor en los partidos importantes." },
+  { id: "auto", name: "Auto deportivo", emoji: "🏎️", price: 900, kind: "vida", desc: "+10 de fama al instante. Ojo con las multas." },
+  { id: "mansion", name: "Mansión con pileta", emoji: "🏰", price: 4000, kind: "vida", desc: "+15 de fama y +10 de moral. Leyenda." },
+  { id: "barrio", name: "Comprar el club de tu barrio", emoji: "🏟️", price: 20000, kind: "vida", desc: "Le devolvés al potrero lo que te dio. +20 de fama." },
+  { id: "isla", name: "Isla privada", emoji: "🏝️", price: 60000, kind: "vida", desc: "Vacaciones eternas: tu moral nunca baja de 60." },
+];
+
 export function overall(s: Stats, pos: Pos) {
   const w: Record<Pos, Stats> = {
     DC: { tiro: 0.36, pase: 0.12, regate: 0.2, velocidad: 0.2, fisico: 0.12 },
@@ -222,4 +508,23 @@ export function overall(s: Stats, pos: Pos) {
 export function fmtMoney(k: number) {
   if (k >= 1000) return `€${(k / 1000).toFixed(k >= 10000 ? 0 : 1)}M`;
   return `€${Math.round(k)}k`;
+}
+
+// ---------- Escudos propios (los carga el jugador) ----------
+
+const crestKey = (id: string) => `crack-crest-${id}`;
+export function customCrest(id: string): string | null {
+  try {
+    return localStorage.getItem(crestKey(id));
+  } catch {
+    return null;
+  }
+}
+export function setCustomCrest(id: string, dataUrl: string | null) {
+  try {
+    if (dataUrl) localStorage.setItem(crestKey(id), dataUrl);
+    else localStorage.removeItem(crestKey(id));
+  } catch {
+    /* sin almacenamiento */
+  }
 }

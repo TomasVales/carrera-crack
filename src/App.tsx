@@ -1,16 +1,16 @@
 import { useRef, useState } from "react";
 import { club } from "./game/data";
 import {
-  buy, closeWindow, endSeason, equip, finishMatch, importCareer, loadSlot, openSummerWindow, resolveEvent, retire, save, signFor, startNextSeason, wipeSlot,
+  buy, closeWindow, endSeason, equip, finishMatch, importCareer, loadSlot, openSummerWindow, resolveEvent, retire, save, signFor, simulateMine, startNextSeason, wipeSlot,
   type Career, type MatchOutcome, type Offer, type Report, type SeasonSummary,
 } from "./game/career";
 import { useClubTheme } from "./ui/common";
 import Creator from "./ui/Creator";
 import Hub, { type HubActions } from "./ui/Hub";
 import MatchScreen, { PracticeScreen } from "./ui/MatchScreen";
-import { EventScreen, MarketScreen, ResultScreen, RetiredScreen, SeasonEndScreen, TitleScreen } from "./ui/Screens";
+import { EventScreen, GalaScreen, MarketScreen, ResultScreen, RetiredScreen, SeasonEndScreen, TitleScreen } from "./ui/Screens";
 
-type Screen = "title" | "create" | "hub" | "match" | "result" | "event" | "market" | "season" | "retired" | "practice";
+type Screen = "title" | "create" | "hub" | "match" | "result" | "event" | "market" | "season" | "gala" | "retired" | "practice";
 
 export default function App() {
   const [career, setCareerState] = useState<Career | null>(null);
@@ -50,7 +50,7 @@ export default function App() {
       });
       void n;
       setSummary(s);
-      return setScreen("season");
+      return setScreen((s as SeasonSummary | null)?.gala.length ? "gala" : "season");
     }
     setScreen("hub");
   }
@@ -82,6 +82,21 @@ export default function App() {
   const actions: HubActions = {
     onPlay: () => { setMode("jugar"); setScreen("match"); },
     onSim: () => { setMode("simular"); setScreen("match"); },
+    onSimMany: () => {
+      // simula hasta 8 partidos seguidos; frena ante eventos, mercado o fin de temporada
+      let last: Report | null = null;
+      const n = mutate((x) => {
+        for (let i = 0; i < 8; i++) {
+          if (x.pendingEvent || x.offers || x.seasonOver || x.retired) break;
+          last = finishMatch(x, simulateMine(x, x.player.injured > 0));
+        }
+      });
+      if (last) {
+        setReport(last);
+        setScreen("result");
+        window.scrollTo(0, 0);
+      } else advance(n);
+    },
     onSpend: (k) => mutate((n) => { n.player.stats[k] = Math.min(99, n.player.stats[k] + 1); n.player.points--; }),
     onFocus: (f) => mutate((n) => { n.player.focus = f; }),
     onBuy: (id) => { let msg = ""; mutate((n) => { msg = buy(n, id); }); return msg; },
@@ -150,7 +165,7 @@ export default function App() {
         <>
           <Hub c={c} actions={actions} locked />
           <EventScreen
-            key={`${c.season}-${c.slot}-${c.pendingEvent}`}
+            key={`${c.season}-${c.slot}`}
             c={c}
             onPick={(i) => {
               let msg = "";
@@ -175,6 +190,8 @@ export default function App() {
           onStay={() => afterMarket((n) => closeWindow(n))}
         />
       );
+    case "gala":
+      return <GalaScreen c={c} awards={summary!.gala} onDone={() => setScreen("season")} />;
     case "season":
       return (
         <SeasonEndScreen

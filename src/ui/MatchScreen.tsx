@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { club, pick, rand, randInt, type Team } from "../game/data";
+import { club, clubsOf, pick, rand, randInt, type Team } from "../game/data";
 import { backgroundScore, effStats, matchInfo, matchRole, playedRating, rivalLevel, simulateMine, type Career, type MatchOutcome } from "../game/career";
 import { Arcade, type PlayKind, type PlayOutcome, type PlayResult, type Weather } from "../game/match";
 import { sfx } from "../game/audio";
@@ -8,7 +8,21 @@ import { Avatar, Btn, Crest } from "./common";
 type Ev = { min: number; kind: "play" | "mine" | "theirs" | "talk"; play?: PlayKind };
 type Feed = { min: number | string; text: string; tone: "good" | "bad" | "neutral" | "big" };
 
-const KINDS: Record<string, PlayKind[]> = { DC: ["mano", "contra", "afuera"], EXT: ["banda", "contra", "mano"], ENG: ["pared", "afuera", "contra"] };
+const KINDS: Record<string, PlayKind[]> = {
+  DC: ["mano", "contra", "afuera", "corner", "mano"],
+  EXT: ["banda", "contra", "mano", "banda", "defensa"],
+  ENG: ["pared", "afuera", "contra", "posesion", "pared"],
+};
+
+/** Elige una jugada: la de tu posición, con pelota parada y defensa de vez en cuando. */
+function pickPlay(pos: string): PlayKind {
+  const r = rand();
+  if (r < (pos === "ENG" ? 0.16 : 0.1)) return "libre";
+  if (r < 0.17) return "penal";
+  if (r < 0.27) return "defensa";
+  if (r < 0.35) return pos === "ENG" ? "posesion" : "corner";
+  return pick(KINDS[pos]);
+}
 
 const TALK = [
   "Se juega a mil por hora en el medio",
@@ -31,8 +45,11 @@ function colorDist(a: string, b: string) {
 
 /** Camiseta del rival: si choca con la tuya, usa la alternativa. */
 function rivalKit(mine: Team, rv: Team) {
-  if (colorDist(mine.c1, rv.c1) < 130) return { c1: rv.alt[0], c2: rv.alt[1] };
-  return { c1: rv.c1, c2: rv.c2 };
+  if (colorDist(mine.c1, rv.c1) >= 130) return { c1: rv.c1, c2: rv.c2 };
+  if (colorDist(mine.c1, rv.alt[0]) >= 130) return { c1: rv.alt[0], c2: rv.alt[1] };
+  // si las dos chocan, el rival juega con camiseta clara (o oscura)
+  const light = colorDist(mine.c1, "#f8fafc") >= 160;
+  return light ? { c1: "#f8fafc", c2: rv.c1 } : { c1: "#111827", c2: rv.c1 };
 }
 
 const isTouch = () => typeof window !== "undefined" && (window.matchMedia("(pointer: coarse)").matches || "ontouchstart" in window);
@@ -62,13 +79,7 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
     const from = titular ? 6 : 55;
     const mins = new Set<number>();
     while (mins.size < n) mins.add(randInt(from, 86));
-    const kinds = KINDS[c.player.pos];
-    const evs: Ev[] = [...mins].map((min) => {
-      const r = rand();
-      const libre = c.player.pos === "ENG" ? 0.25 : 0.14;
-      const play: PlayKind = r < libre ? "libre" : r < libre + 0.08 ? "penal" : pick(kinds);
-      return { min, kind: "play", play };
-    });
+    const evs: Ev[] = [...mins].map((min) => ({ min, kind: "play", play: pickPlay(c.player.pos) }));
     const bg = backgroundScore(c);
     for (let i = 0; i < bg.mine; i++) evs.push({ min: randInt(2, 88), kind: "mine" });
     for (let i = 0; i < bg.theirs; i++) evs.push({ min: randInt(2, 88), kind: "theirs" });
@@ -141,7 +152,7 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
           if (mode === "jugar" && !s.epicDone && close && (role.role === "titular" || rand() < 0.6)) {
             s.epicDone = true;
             s.paused = true;
-            setPlay({ kind: pick(KINDS[c.player.pos]), epic: true, min: 90 });
+            setPlay({ kind: pick(KINDS[c.player.pos].filter((k) => k !== "defensa" && k !== "posesion")), epic: true, min: 90 });
           } else if (m.knockout && s.mine === s.theirs && !s.pensDone) {
             s.pensDone = true;
             if (mode === "jugar") {
@@ -192,13 +203,19 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
       afuera: ["Remate desviado", "neutral"],
       perdida: ["Perdiste la pelota", "bad"],
       tiempo: ["La jugada se diluye", "neutral"],
+      recupero: ["¡Recuperaste la pelota y cortaste el contraataque!", "good"],
+      golrival: [`Gol de ${rv.name} en la contra...`, "bad"],
+      posesion: ["¡Olé, olé! Toque y toque en mitad de cancha", "good"],
     };
     if (r.outcome === "gol") { s.goals++; s.mine++; }
     if (r.outcome === "asist") { s.assists++; s.mine++; }
-    if (r.outcome === "tiempo") s.bad += 0.5;
+    if (r.outcome === "tiempo" && cur.kind !== "defensa") s.bad += 0.5;
+    if (r.outcome === "golrival") { s.theirs++; s.bad += 1; sfx.ooh(); }
+    if (r.outcome === "recupero") s.good += 1.5;
+    if (r.outcome === "posesion") s.good += 1;
     if (r.outcome === "atajada" || r.outcome === "palo") s.good += 0.5;
     setScore({ mine: s.mine, theirs: s.theirs });
-    push({ min: cur.min, text: `${cur.kind === "libre" ? "Tiro libre: " : cur.kind === "penal" ? "Penal: " : ""}${txt[r.outcome][0]}`, tone: txt[r.outcome][1] });
+    push({ min: cur.min, text: `${cur.kind === "libre" ? "Tiro libre: " : cur.kind === "penal" ? "Penal: " : cur.kind === "corner" ? "Córner: " : ""}${txt[r.outcome][0]}`, tone: txt[r.outcome][1] });
     setPlay(null);
     s.paused = false;
   }
@@ -284,7 +301,8 @@ function TeamBadge({ t }: { t: Team }) {
 // ---------- Salida de los equipos ----------
 
 function Walkout({ c, home, away, label, weather, role, onGo }: { c: Career; home: Team; away: Team; label: string; weather: Weather; role: { role: string; why: string }; onGo: () => void }) {
-  const myTeam = club(c.schedule[c.slot]?.kind === "nac" ? c.player.nation : c.clubId);
+  const cur = c.schedule[c.slot];
+  const myTeam = club(cur?.kind === "cup" && cur.cup === "nac" ? c.player.nation : c.clubId);
   useEffect(() => {
     sfx.crowdStart();
     const t = setTimeout(() => sfx.whistle(), 400);
@@ -358,7 +376,7 @@ export function PlayLayer({ c, kind, epic, decisive, minute, me, rv, home, weath
       <canvas ref={ref} className="h-full w-full touch-none" />
       {!touch && (
         <div className="pointer-events-none absolute bottom-3 right-3 rounded-xl bg-black/55 px-3 py-2 text-xs font-bold text-white/80">
-          <b className="text-white">WASD</b> mover · <b className="text-white">Shift</b> correr · <b className="text-white">Espacio</b> patear (toque = vaselina) · <b className="text-white">Shift+Espacio</b> comba · <b className="text-white">E</b> pase · <b className="text-white">Q</b> amague/salto
+          <b className="text-white">WASD</b> mover · <b className="text-white">Shift</b> correr · <b className="text-white">Espacio</b> patear / barrida / cabezazo · <b className="text-white">Shift+Espacio</b> comba · <b className="text-white">E</b> pase / meter la pierna · <b className="text-white">Q</b> amague/salto
         </div>
       )}
       {touch && <TouchControls arcade={arcade} />}
@@ -471,12 +489,12 @@ const STEPS = [
 /** ?jugada=libre|penal|mano... en la URL: practicar una jugada puntual (útil para probar). */
 function debugKind(): PlayKind {
   const k = new URLSearchParams(window.location.search).get("jugada");
-  return (["mano", "contra", "pared", "afuera", "banda", "libre", "penal"] as const).find((x) => x === k) ?? "practica";
+  return (["mano", "contra", "pared", "afuera", "banda", "libre", "penal", "defensa", "posesion", "corner"] as const).find((x) => x === k) ?? "practica";
 }
 
 export function PracticeScreen({ c, onExit }: { c: Career; onExit: () => void }) {
   const me = club(c.clubId);
-  const rv = club(me.id === "pom" ? "moz" : "pom");
+  const rv = clubsOf(me.league).find((x) => x.id !== me.id)!;
   const [step, setStep] = useState(0);
   const [stats, setStats] = useState<{ shots: number; goals: number } | null>(null);
   useEffect(() => {

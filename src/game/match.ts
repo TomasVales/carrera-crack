@@ -5,8 +5,8 @@ import { sfx } from "./audio";
 import { clamp, pick, rand, seeded, type Look, type Stats } from "./data";
 import { drawBall, drawPlayer, drawShadow, type Kit } from "./draw";
 
-export type PlayKind = "mano" | "contra" | "pared" | "afuera" | "banda" | "libre" | "penal" | "practica";
-export type PlayOutcome = "gol" | "asist" | "atajada" | "palo" | "afuera" | "perdida" | "tiempo";
+export type PlayKind = "mano" | "contra" | "pared" | "afuera" | "banda" | "libre" | "penal" | "practica" | "defensa" | "posesion" | "corner";
+export type PlayOutcome = "gol" | "asist" | "atajada" | "palo" | "afuera" | "perdida" | "tiempo" | "recupero" | "golrival" | "posesion";
 export type Weather = "sol" | "noche" | "lluvia";
 export type PlayResult = { outcome: PlayOutcome; good: number; bad: number; shots?: number; goals?: number };
 
@@ -37,6 +37,9 @@ export const PLAY_NAMES: Record<PlayKind, string> = {
   libre: "TIRO LIBRE",
   penal: "¡PENAL!",
   practica: "ENTRENAMIENTO",
+  defensa: "¡CONTRAATAQUE RIVAL!",
+  posesion: "TOQUE EN MITAD DE CANCHA",
+  corner: "TIRO DE ESQUINA",
 };
 
 export const PLAY_TIPS: Record<PlayKind, string> = {
@@ -48,6 +51,9 @@ export const PLAY_TIPS: Record<PlayKind, string> = {
   libre: "Apuntá con W/S · Shift+Espacio para la comba",
   penal: "Apuntá con W/S y elegí la potencia",
   practica: "Probá todo sin presión",
+  defensa: "Alcanzalo: Espacio = barrida · E = meter la pierna",
+  posesion: "Aguantá la pelota tocando con tus compañeros (E)",
+  corner: "Andá al círculo y cabeceá con Espacio cuando llegue",
 };
 
 // ---------- Mundo ----------
@@ -62,7 +68,7 @@ const BOT = 616;
 const GRAV = 900;
 const GK_REACH_Z = 26;
 
-type Role = "me" | "mate" | "def" | "gk" | "wall";
+type Role = "me" | "mate" | "def" | "gk" | "wall" | "att";
 type Tackle = "none" | "wind" | "slide" | "down";
 type Ent = {
   role: Role;
@@ -79,7 +85,7 @@ type Ent = {
 type ShotKind = "normal" | "chip" | "curve";
 type Ball = {
   x: number; y: number; z: number; vx: number; vy: number; vz: number;
-  owner: Ent | null; last: Ent | null; shot: boolean; spin: number; byMate: boolean;
+  owner: Ent | null; last: Ent | null; shot: boolean; spin: number; byMate: boolean; byRival: boolean;
   ax: number; ay: number; curveT: number; kind: ShotKind;
 };
 type Particle = { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; max: number; color: string; size: number; type: "grass" | "confetti" | "smoke" | "spark" };
@@ -142,12 +148,16 @@ export class Arcade {
   private pShots = 0;
   private pGoals = 0;
   private rng: () => number;
+  private passes = 0;
+  private cross: { x: number; y: number; t: number } | null = null;
+  private crossDone = false;
+  private recoverT = -1;
 
   constructor(private canvas: HTMLCanvasElement, private s: PlaySetup, private onEnd: (r: PlayResult) => void) {
     this.ctx = canvas.getContext("2d")!;
     this.practice = s.kind === "practica";
     this.setPiece = s.kind === "libre" || s.kind === "penal";
-    this.totalTime = this.timeLeft = ({ mano: 9, contra: 11, pared: 12, afuera: 8, banda: 12, libre: 10, penal: 8, practica: 60 } as const)[s.kind] + (s.epic ? 2 : 0);
+    this.totalTime = this.timeLeft = ({ mano: 9, contra: 11, pared: 12, afuera: 8, banda: 12, libre: 10, penal: 8, practica: 60, defensa: 9, posesion: 10, corner: 8 } as const)[s.kind] + (s.epic ? 2 : 0);
     this.rng = seeded(s.rivalSeed);
     this.setup();
     for (let i = 0; i < 300; i++) {
@@ -208,6 +218,11 @@ export class Arcade {
       return;
     }
     if (this.intro > 0 || this.result) return;
+    if (down && this.tryHeader()) return;
+    if (down && this.ball.owner !== this.me && this.ball.owner !== this.mate && !this.setPiece) {
+      this.meSlide();
+      return;
+    }
     if (this.canShootNow()) {
       if (down) this.charge = 0;
       else if (this.charge >= 0) {
@@ -221,6 +236,16 @@ export class Arcade {
   }
   pressPass() {
     if (this.intro > 0 || this.result || this.setPiece) return;
+    const o = this.ball.owner;
+    if (o && (o.role === "def" || o.role === "att")) {
+      // meter la pierna
+      if (len(o.x - this.me.x, o.y - this.me.y) < 24 && this.me.tk === "none") {
+        this.me.kick = 1;
+        if (rand() < 0.4 + this.s.stats.fisico / 300) this.recover(o);
+        else { this.me.stun = 0.35; this.popText("¡NO LLEGÓ!", "#fca5a5"); }
+      }
+      return;
+    }
     if (this.ball.owner === this.me) this.pass(this.me);
     else if (this.ball.owner === this.mate) this.wantPared = 1;
   }
@@ -261,6 +286,55 @@ export class Arcade {
   }
   setTouchSprint(on: boolean) {
     this.touchSprint = on;
+  }
+
+  /** Barrida tuya hacia donde te movés (o hacia la pelota). */
+  private meSlide() {
+    const me = this.me;
+    if (me.tk !== "none" || me.stun > 0) return;
+    const d = this.moveDir();
+    let dx = d.x, dy = d.y;
+    if (!dx && !dy) { dx = this.ball.x - me.x; dy = this.ball.y - me.y; }
+    const l = len(dx, dy) || 1;
+    const sp = 400 + this.s.stats.velocidad;
+    me.sdx = (dx / l) * sp; me.sdy = (dy / l) * sp;
+    me.face = Math.sign(dx) || 1;
+    me.tk = "slide"; me.tt = 0.32;
+    sfx.pass();
+  }
+
+  /** Recuperaste la pelota. */
+  private recover(from: Ent | null) {
+    const b = this.ball;
+    if (from) { from.tk = "down"; from.tt = 0.8; from.hold = 0; }
+    b.owner = this.me;
+    b.shot = false;
+    b.curveT = 0;
+    this.good++;
+    this.popText("¡RECUPERADA!", "#86efac");
+    sfx.ooh();
+    if (this.s.kind === "defensa") this.recoverT = this.t;
+  }
+
+  /** Cabezazo en el córner (o cualquier pelota alta cerca). */
+  private tryHeader() {
+    const b = this.ball;
+    if (b.owner || b.shot || this.result) return false;
+    if (b.z < 8 || b.z > 48 || len(b.x - this.me.x, b.y - this.me.y) > 26) return false;
+    const plan = this.shotPlan(this.me);
+    const tiro = this.s.stats.tiro;
+    const a0 = Math.atan2(plan.ty - b.y, GX + 6 - b.x) + (rand() - 0.5) * 2 * Math.max(0.04, 0.2 - tiro / 600);
+    const power = 520 + tiro * 2;
+    b.vx = Math.cos(a0) * power; b.vy = Math.sin(a0) * power; b.vz = -40;
+    b.shot = true; b.kind = "normal"; b.byMate = false; b.byRival = false; b.last = this.me; b.ax = 0; b.ay = 0; b.curveT = 0;
+    this.me.hvz = 200;
+    this.shotT = this.t;
+    this.pShots++;
+    this.cross = null;
+    sfx.kick(0.6);
+    this.popText("¡CABEZAZO!", "#fde68a");
+    this.timeScale = 0.6;
+    return true;
   }
 
   private keyDir() {
@@ -346,19 +420,47 @@ export class Arcade {
       case "practica":
         this.me = this.ent("me", 560, GY, myKit, look);
         break;
+      case "defensa": {
+        // el rival arranca lejos; vos estás entre él y tu arco
+        const y = GY + j();
+        const a = this.ent("att", 330, y, rivalKit, rl());
+        a.face = 1;
+        this.ent("att", 290, y + (y > GY ? -150 : 150), rivalKit, rl());
+        this.me = this.ent("me", 470, y + (y > GY ? -50 : 50), myKit, look);
+        break;
+      }
+      case "posesion":
+        this.me = this.ent("me", 430, GY + j() * 0.5, myKit, look);
+        this.mate = this.ent("mate", 520, GY - 130, mateKit, rl());
+        this.ent("mate", 520, GY + 130, { ...kit, num: 8 }, rl());
+        this.ent("def", 520, GY - 20, rivalKit, rl());
+        this.ent("def", 560, GY + 40, rivalKit, rl());
+        break;
+      case "corner": {
+        const top = rand() < 0.5;
+        this.me = this.ent("me", GX - 210, GY + (top ? 40 : -40), myKit, look);
+        this.mate = this.ent("mate", GX - 150, GY + (top ? -60 : 60), mateKit, rl());
+        this.ent("def", GX - 120, GY + (top ? 10 : -10), rivalKit, rl());
+        this.ent("def", GX - 90, GY + (top ? -40 : 40), rivalKit, rl());
+        this.cross = { x: GX - 70 - rand() * 60, y: GY + (rand() - 0.5) * 120, t: 0 };
+        this.ball = { x: GX - 4, y: top ? TOP + 6 : BOT - 6, z: 0, vx: 0, vy: 0, vz: 0, owner: null, last: null, shot: false, spin: 0, byMate: false, byRival: false, ax: 0, ay: 0, curveT: 0, kind: "normal" };
+        break;
+      }
     }
-    if (!this.setPiece && kind !== "practica" && rand() < 0.5) for (const e of this.ents) { e.y = 2 * GY - e.y; e.laneY = e.y; }
+    if (!this.setPiece && kind !== "practica" && kind !== "corner" && rand() < 0.5) for (const e of this.ents) { e.y = 2 * GY - e.y; e.laneY = e.y; }
     for (const e of this.ents) { e.homeX = e.x; e.homeY = e.y; }
     if (this.mate) this.mate.laneY = this.mate.y;
-    this.gk = this.ent("gk", GX - 16, GY, gkKit, rl());
+    this.gk = this.ent("gk", GX - 16, GY, kind === "defensa" ? { c1: "#38bdf8", c2: "#0f172a", num: 1 } : gkKit, rl());
     if (kind === "libre") {
       const walls = this.ents.filter((e) => e.role === "wall");
       const wallY = walls.reduce((a, e) => a + e.y, 0) / walls.length;
       this.gk.y = GY + (wallY > GY ? -22 : 22);
     }
-    const bx = kind === "libre" ? this.me.x + 26 : kind === "penal" ? GX - 110 : this.me.x + 14;
-    const by = kind === "libre" ? this.me.y - 4 : kind === "penal" ? GY : this.me.y + 2;
-    this.ball = { x: bx, y: by, z: 0, vx: 0, vy: 0, vz: 0, owner: this.setPiece ? null : this.me, last: this.me, shot: false, spin: 0, byMate: false, ax: 0, ay: 0, curveT: 0, kind: "normal" };
+    if (kind === "corner") { this.cam = { x: GX - 150, y: GY }; return; }
+    const att = this.ents.find((e) => e.role === "att");
+    const bx = kind === "libre" ? this.me.x + 26 : kind === "penal" ? GX - 110 : att ? att.x + 14 : this.me.x + 14;
+    const by = kind === "libre" ? this.me.y - 4 : kind === "penal" ? GY : att ? att.y + 2 : this.me.y + 2;
+    this.ball = { x: bx, y: by, z: 0, vx: 0, vy: 0, vz: 0, owner: this.setPiece ? null : att ?? this.me, last: att ?? this.me, shot: false, spin: 0, byMate: false, byRival: false, ax: 0, ay: 0, curveT: 0, kind: "normal" };
     this.cam = { x: this.me.x + 120, y: this.me.y };
   }
 
@@ -378,7 +480,7 @@ export class Arcade {
   private shoot(who: Ent, charge: number, colocado = false) {
     const st = this.s.stats;
     const isMe = who === this.me;
-    const tiro = isMe ? st.tiro : 70;
+    const tiro = isMe ? st.tiro : who.role === "att" ? 55 + this.s.rival * 30 : 70;
     const plan = this.shotPlan(who);
     const c = clamp(charge, 0.05, 1.15);
     const over = Math.max(0, c - 0.9);
@@ -423,7 +525,8 @@ export class Arcade {
     b.vz = vz;
     b.shot = plan.toGoal;
     b.kind = kind;
-    b.byMate = !isMe;
+    b.byMate = who.role === "mate";
+    b.byRival = who.role === "att";
     if (!this.setPiece) { b.x = who.x + Math.cos(launch) * 16; b.y = who.y + Math.sin(launch) * 16; }
     this.shotT = this.t;
     who.kick = 1;
@@ -471,7 +574,7 @@ export class Arcade {
       this.kickTo(from, tx, ty, 0.9, true);
     } else this.kickTo(from, tx, ty, 0.55);
     sfx.pass();
-    if (isMe) this.good++;
+    if (isMe) { this.good++; if (this.s.kind === "posesion") this.passes++; }
   }
 
   private kickTo(from: Ent, tx: number, ty: number, power: number, lofted = false) {
@@ -483,6 +586,7 @@ export class Arcade {
     b.last = from;
     b.shot = false;
     b.kind = "normal";
+    b.byRival = from.role === "att";
     b.ax = 0; b.ay = 0; b.curveT = 0;
     b.vx = (dx / d) * sp;
     b.vy = (dy / d) * sp;
@@ -525,13 +629,32 @@ export class Arcade {
       this.timeLeft -= dt;
       if (this.timeLeft <= 0 && !this.ballInFlight()) {
         if (this.practice) { this.quit(); return; }
-        this.finish("tiempo", "¡SE ACABÓ EL TIEMPO!", "La defensa se acomodó", "#e5e7eb");
+        const ours = this.ball.owner === this.me || this.ball.owner === this.mate || this.ball.owner?.role === "mate";
+        if (this.s.kind === "posesion" && ours) this.finish("posesion", "¡QUÉ TOQUE!", `Aguantaste la pelota (${this.passes} pases)`, "#86efac");
+        else if (this.s.kind === "defensa") this.finish("tiempo", "¡LLEGÓ EL APOYO!", "Lo demoraste hasta que volvió la defensa", "#e5e7eb");
+        else this.finish("tiempo", "¡SE ACABÓ EL TIEMPO!", "La defensa se acomodó", "#e5e7eb");
       }
     }
 
     if (this.intro <= 0) {
       this.updateMe(dt);
       this.updateAI(dt);
+      // córner: el centro sale solo
+      if (this.cross && !this.crossDone && this.t > 0.5) {
+        this.crossDone = true;
+        const b = this.ball;
+        const dx = this.cross.x - b.x, dy = this.cross.y - b.y;
+        const d = len(dx, dy);
+        const sp = 430;
+        b.vx = (dx / d) * sp; b.vy = (dy / d) * sp;
+        b.vz = (GRAV * (d / sp)) / 2 + 30;
+        b.last = null;
+        sfx.kick(0.6);
+      }
+      // defensa: si la recuperaste y la aguantás, ganaste
+      if (this.recoverT >= 0 && this.ball.owner === this.me && this.t - this.recoverT > 0.6 && !this.result) this.finish("recupero", "¡RECUPERADA!", "Cortaste el contraataque", "#86efac");
+      // posesión: aguantar hasta el final
+      if (this.s.kind === "posesion" && !this.result && this.passes >= 7) this.finish("posesion", "¡QUÉ TOQUE!", `${this.passes} pases seguidos: ¡olé, olé!`, "#86efac");
     }
     for (const e of this.ents) {
       if (e.tk !== "slide") { e.x += e.vx * dt; e.y += e.vy * dt; }
@@ -566,6 +689,25 @@ export class Arcade {
   private updateMe(dt: number) {
     const me = this.me;
     if (this.result === "gol" || this.result === "asist") return;
+    if (me.tk === "slide") {
+      me.x += me.sdx * dt; me.y += me.sdy * dt;
+      me.sdx *= Math.pow(0.25, dt); me.sdy *= Math.pow(0.25, dt);
+      me.vx = me.sdx; me.vy = me.sdy;
+      me.tt -= dt;
+      const b = this.ball;
+      const o = b.owner;
+      if (len(b.x - me.x, b.y - me.y) < 20 && b.z < 14 && o !== me) {
+        if (!o || o.role === "def" || o.role === "att") this.recover(o);
+      }
+      if (me.tt <= 0) { me.tk = "down"; me.tt = 0.4; me.vx = 0; me.vy = 0; }
+      return;
+    }
+    if (me.tk === "down") {
+      me.tt -= dt; me.vx *= 0.8; me.vy *= 0.8;
+      if (me.tt <= 0) me.tk = "none";
+      return;
+    }
+    if (me.stun > 0) { me.vx *= 0.85; me.vy *= 0.85; return; }
     const d = this.moveDir();
     if (this.setPiece && !this.ball.shot && !this.result) {
       this.aim = clamp(this.aim + d.y * dt * 1.3, -1, 1);
@@ -582,6 +724,7 @@ export class Arcade {
     let max = 150 + st.velocidad * 1.45;
     if (sprinting) max *= 1.32;
     if (this.ball.owner === me) max *= 0.84 + st.regate / 700;
+    if (this.s.kind === "defensa" && this.ball.owner !== me) max *= 1.06;
     if (this.s.energy < 30) max *= 0.9;
     if (this.charge >= 0) max *= 0.55;
     const acc = this.s.weather === "lluvia" ? 6 : 9;
@@ -599,8 +742,35 @@ export class Arcade {
       if (e.celebrate) { e.vx *= 0.9; e.vy *= 0.9; continue; }
       if (e.role === "gk") { this.updateGK(e, dt, lvl); continue; }
       let tx = e.x, ty = e.y, sp = 200;
-      if (e.role === "mate") {
+      if (e.tk === "down") { e.vx *= 0.8; e.vy *= 0.8; e.tt -= dt; if (e.tt <= 0) { e.tk = "none"; e.cd = 1.3; } continue; }
+      if (e.role === "att") {
+        // atacante rival: encara hacia tu arco
         if (b.owner === e) {
+          e.hold += dt;
+          const dme = len(this.me.x - e.x, this.me.y - e.y);
+          tx = GX - 40; ty = GY + Math.sin(this.t * 2 + e.homeY) * 70;
+          sp = 150 + lvl * 60;
+          if (dme < 45 && this.me.tk === "none") ty = e.y + (this.me.y > e.y ? -90 : 90); // te esquiva
+          const partner = this.ents.find((x) => x.role === "att" && x !== e);
+          if (partner && dme < 40 && e.hold > 0.6 && rand() < dt * 2) { this.kickTo(e, partner.x + 40, partner.y, 0.5); e.hold = 0; }
+          else if (e.x > GX - 175 && e.hold > 0.3) this.shoot(e, 0.7 + rand() * 0.3);
+        } else {
+          tx = Math.min((b.owner ?? b).x + 60, GX - 120); ty = e.homeY; sp = 190;
+          if (!b.owner && !b.shot && b.last?.role === "att") { tx = b.x; ty = b.y; sp = 230; }
+        }
+      } else if (e.role === "mate") {
+        if (this.s.kind === "posesion") {
+          // ofrecerse como descarga y devolverla rápido
+          const side = e.homeY > GY ? 1 : -1;
+          tx = this.me.x + 70 + Math.sin(this.t + side) * 30;
+          ty = clamp(this.me.y + side * 120, TOP + 30, BOT - 30);
+          sp = 210;
+          if (b.owner === e) {
+            e.hold += dt;
+            tx = e.x; ty = e.y;
+            if ((this.wantPared > 0 && e.hold > 0.12) || e.hold > 0.7 || this.closestDef(e) < 35) { this.wantPared = 0; this.pass(e); this.passes++; }
+          }
+        } else if (b.owner === e) {
           e.hold += dt;
           tx = GX - 60; ty = GY + (e.laneY > GY ? 40 : -40); sp = 190;
           const dGoal = len(GX - e.x, GY - e.y);
@@ -618,11 +788,6 @@ export class Arcade {
       } else {
         // ----- defensor -----
         e.cd = Math.max(0, e.cd - dt);
-        if (e.tk === "down") {
-          e.vx *= 0.8; e.vy *= 0.8; e.tt -= dt;
-          if (e.tt <= 0) { e.tk = "none"; e.cd = 1.3; }
-          continue;
-        }
         if (e.tk === "slide") {
           e.x += e.sdx * dt; e.y += e.sdy * dt;
           e.sdx *= Math.pow(0.25, dt); e.sdy *= Math.pow(0.25, dt);
@@ -655,6 +820,19 @@ export class Arcade {
         }
         if (e.stun > 0 || this.t < 0.55) { e.vx *= 0.85; e.vy *= 0.85; continue; }
         sp = 165 + lvl * 95;
+        if (b.owner === e) {
+          // te la sacó: intenta despejar antes de que se la recuperes
+          e.hold += dt;
+          tx = e.x - 200; ty = e.y + (e.y > GY ? 60 : -60); sp = 170;
+          if (e.hold > 1.0) {
+            this.kickTo(e, e.x - 420, e.y + (rand() - 0.5) * 200, 1);
+            this.finish("perdida", "¡DESPEJÓ!", "El rival la sacó lejos", "#fca5a5");
+          }
+          const dx0 = tx - e.x, dy0 = ty - e.y, dl0 = len(dx0, dy0) || 1;
+          e.vx += ((dx0 / dl0) * sp - e.vx) * Math.min(1, 6 * dt);
+          e.vy += ((dy0 / dl0) * sp - e.vy) * Math.min(1, 6 * dt);
+          continue;
+        }
         const idx = defs.indexOf(e);
         const marking = idx === 1 && this.mate && carrier === this.me;
         if (marking && this.mate) {
@@ -755,7 +933,7 @@ export class Arcade {
     if (victim) victim.stun = 0.5;
     sfx.save();
     this.bad++;
-    this.finish("perdida", slide ? "¡QUÉ BARRIDA!" : "¡TE LA ROBARON!", slide ? "Te la sacó limpia" : "Te quedaste pegado al defensor", "#fca5a5");
+    this.popText(slide ? "¡QUÉ BARRIDA!" : "¡TE LA ROBARON!", "#fca5a5");
   }
 
   private updateBall(dt: number) {
@@ -774,7 +952,7 @@ export class Arcade {
       b.y += (ty - b.y) * Math.min(1, dt * 18);
       b.z = o.hz + Math.abs(Math.sin(o.phase)) * 2;
       b.vx = o.vx; b.vy = o.vy; b.vz = 0;
-      if ((o.role === "def" || o.role === "gk") && !this.result) this.finish(o.role === "gk" ? "atajada" : "perdida", o.role === "gk" ? "¡LA AGARRÓ EL ARQUERO!" : "¡LA PERDISTE!", undefined, "#fca5a5");
+      if (o.role === "gk" && !this.result) this.finish("atajada", "¡LA AGARRÓ EL ARQUERO!", undefined, "#93c5fd");
       return;
     }
     const prevX = b.x;
@@ -860,6 +1038,17 @@ export class Arcade {
       }
     }
 
+    if (this.cross && !b.shot && b.z > 8 && b.z < 46) {
+      for (const d of this.ents) {
+        if (d.role !== "def" || len(b.x - d.x, b.y - d.y) > 17) continue;
+        b.vx = -380; b.vy = (rand() - 0.5) * 300; b.vz = 160; b.last = d;
+        d.hvz = 180;
+        this.cross = null;
+        sfx.save();
+        this.finish("perdida", "¡DESPEJÓ DE CABEZA!", "El central ganó arriba", "#fca5a5");
+        return;
+      }
+    }
     if (b.z < 26) {
       for (const e of this.ents) {
         if (e.role === "wall" || e.tk === "slide" || e.tk === "down") continue;
@@ -874,13 +1063,27 @@ export class Arcade {
         }
         const d = len(b.x - e.x, b.y - e.y);
         const r = e.role === "def" ? 17 : 20;
-        if (d < r && !(b.shot && e.role !== "def") && !(b.last === e && len(b.vx, b.vy) > 200)) {
+        if (d < r && !(b.shot && e.role !== "def" && e.role !== "att") && !(b.last === e && len(b.vx, b.vy) > 200)) {
+          if (e === this.me && b.owner === null && b.last && (b.last.role === "def" || b.last.role === "att") && b.last.tk !== "slide") this.recover(null);
           if (e.role === "def") {
             if (b.shot && rand() > 0.35) continue;
+            if (b.shot) {
+              b.owner = e;
+              this.bad++;
+              this.finish("atajada", "¡BLOQUEADO!", "El defensor se tiró al piso", "#fca5a5");
+              sfx.save();
+              return;
+            }
             b.owner = e;
-            this.bad++;
-            this.finish(b.shot ? "atajada" : "perdida", b.shot ? "¡BLOQUEADO!" : "¡CORTADA!", b.shot ? "El defensor se tiró al piso" : "Te leyeron el pase", "#fca5a5");
+            e.hold = 0;
+            if (b.last === this.me || b.last === this.mate || b.last?.role === "mate") { this.bad++; this.popText("¡CORTADA!", "#fca5a5"); }
             sfx.save();
+            return;
+          }
+          if (e.role === "att") {
+            if (b.shot) continue;
+            b.owner = e;
+            e.hold = 0;
             return;
           }
           b.owner = e;
@@ -899,6 +1102,12 @@ export class Arcade {
 
   private goal() {
     const b = this.ball;
+    if (b.byRival) {
+      this.shake = 10;
+      sfx.ooh();
+      this.finish("golrival", "GOL DEL RIVAL", "No llegaste a cortarlo...", "#fca5a5", 1.6);
+      return;
+    }
     const byMate = b.byMate;
     this.netWave = 1;
     this.shake = 16;
@@ -1054,6 +1263,7 @@ export class Arcade {
     ctx.translate(-cx, -cy);
     this.drawPitch(ctx, cx, viewW);
     this.drawGoalBack(ctx);
+    this.drawCrossMark(ctx);
     this.drawAim(ctx);
 
     type D = { y: number; draw: () => void };
@@ -1114,6 +1324,21 @@ export class Arcade {
     this.drawWeather(ctx, cw, ch);
     if (this.replay) this.drawReplayOverlay(ctx, cw, ch);
     else this.drawHUD(ctx, cw, ch);
+  }
+
+  /** Córner: dónde cae el centro. */
+  private drawCrossMark(ctx: CanvasRenderingContext2D) {
+    if (!this.cross || this.result || this.ball.shot) return;
+    const pulse = 1 + Math.sin(this.t * 10) * 0.12;
+    ctx.save();
+    ctx.strokeStyle = "#fde047";
+    ctx.fillStyle = "rgba(253,224,71,.18)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(this.cross.x, this.cross.y, 24 * pulse, 10 * pulse, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
   }
 
   /** Mira: dónde va a ir el remate. */

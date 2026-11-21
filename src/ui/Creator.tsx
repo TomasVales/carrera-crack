@@ -170,8 +170,8 @@ export default function Creator({ slot, onDone, onBack }: { slot: number; onDone
 
           <section className="card rise p-4">
             <h2 className="mb-1 font-black">¿Dónde arrancás?</h2>
-            <p className="mb-3 text-sm text-white/60">Elegí la liga y uno de los tres clubes chicos que te quieren a prueba.</p>
-            <div className="mb-3 grid grid-cols-3 gap-2">
+            <p className="mb-3 text-sm text-white/60">Elegí la liga y uno de los clubes más chicos, que te quieren a prueba.</p>
+            <div className="mb-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
               {LEAGUES.map((l) => (
                 <button
                   key={l.id}
@@ -187,7 +187,7 @@ export default function Creator({ slot, onDone, onBack }: { slot: number; onDone
                 </button>
               ))}
             </div>
-            <div className="grid gap-2 sm:grid-cols-3">
+            <div className="grid gap-2 sm:grid-cols-2">
               {clubs.map((c) => (
                 <button key={c.id} onClick={() => setClubId(c.id)} className={`btn flex items-center gap-3 p-3 text-left ${club.id === c.id ? "ring-4 ring-amber-300" : ""}`} style={{ background: `linear-gradient(135deg, ${c.c1}, ${c.c1}cc 60%, ${c.c2}88)` }}>
                   <Crest club={c} size={40} />

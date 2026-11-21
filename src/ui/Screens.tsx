@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { LEAGUES, POS_INFO, STAT_INFO, club, fmtMoney, league } from "../game/data";
 import {
   EVENTS, eventText, hallOfFame, loadSlot, marketValue, myName, negotiate, ovr,
-  type Career, type Offer, type Report, type Role, type SeasonSummary,
+  type Award, type Career, type Offer, type Report, type Role, type SeasonSummary,
 } from "../game/career";
 import { sfx } from "../game/audio";
 import { Avatar, Btn, Crest, RatingBadge, Stars, clubStars } from "./common";
@@ -13,7 +13,7 @@ export function ResultScreen({ c, r, onNext }: { c: Career; r: Report; onNext: (
   const h = club(r.home);
   const a = club(r.away);
   const myId = h.league === "nac" ? c.player.nation : c.clubId;
-  const mineHome = r.home === myId || (h.league === "nac" && r.home === c.player.nation);
+  const mineHome = r.home === myId;
   const mine = mineHome ? r.hg : r.ag;
   const theirs = mineHome ? r.ag : r.hg;
   const pens = mine === theirs && r.pensWin !== undefined;
@@ -259,7 +259,14 @@ export function SeasonEndScreen({ c, s, onNext }: { c: Career; s: SeasonSummary;
         </div>
       )}
       <div className="card rise grid gap-2 p-4">
-        <div className="font-black">🌍 Campeones del mundo inventado</div>
+        <div className="font-black">🌍 Campeones de la temporada</div>
+        {s.cupWinners.map((w) => (
+          <div key={w.name} className="flex items-center gap-3 rounded-xl bg-amber-400/10 px-3 py-2 text-sm">
+            <Crest club={club(w.team)} size={26} />
+            <span className="flex-1">{w.icon} {w.name}</span>
+            <b>{club(w.team).name}</b>
+          </div>
+        ))}
         {LEAGUES.map((l) => (
           <div key={l.id} className="flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2 text-sm">
             <Crest club={club(s.champions[l.id])} size={26} />
@@ -267,20 +274,11 @@ export function SeasonEndScreen({ c, s, onNext }: { c: Career; s: SeasonSummary;
             <b>{club(s.champions[l.id]).name}</b>
           </div>
         ))}
-        {s.cupChampion && (
-          <div className="flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2 text-sm">
-            <Crest club={club(s.cupChampion)} size={26} />
-            <span className="flex-1">🏆 {c.cup.name}</span>
-            <b>{club(s.cupChampion).name}</b>
-          </div>
-        )}
-        {c.nat?.champion && (
-          <div className="flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2 text-sm">
-            <Crest club={club(c.nat.champion)} size={26} />
-            <span className="flex-1">🌍 Copa de Naciones</span>
-            <b>{club(c.nat.champion).name}</b>
-          </div>
-        )}
+        <div className="flex items-center gap-3 rounded-xl bg-amber-400/10 px-3 py-2 text-sm">
+          <span className="text-2xl">🥇</span>
+          <span className="flex-1">Balón de Oro</span>
+          <b>{s.ballonWinner}</b>
+        </div>
       </div>
       <div className="card rise p-4 text-sm text-white/80">
         <div className="mb-1 font-black text-white">Pretemporada</div>
@@ -344,7 +342,7 @@ export function TitleScreen({ onContinue, onNew, onDelete, refresh }: { onContin
   void refresh;
   return (
     <div className="mx-auto flex min-h-dvh max-w-xl flex-col items-center justify-center gap-6 px-4 py-10 text-center">
-      <div className="flex gap-2">
+      <div className="flex flex-wrap justify-center gap-2">
         {LEAGUES.map((l, i) => (
           <div key={l.id} className="pop text-4xl" style={{ animationDelay: `${i * 0.08}s` }}>{l.flag}</div>
         ))}
@@ -354,7 +352,7 @@ export function TitleScreen({ onContinue, onNew, onDelete, refresh }: { onContin
         <br />
         <span className="text-amber-300">DE CRACK</span>
       </h1>
-      <p className="max-w-sm text-white/70">Creá tu jugador, debutá a los 17 y llevalo a la gloria en tres ligas inventadas, la copa y la selección.</p>
+      <p className="max-w-sm text-white/70">Creá tu jugador, debutá a los 17 y llevalo a la gloria: 12 ligas, Champions, Libertadores, el Mundial y el Balón de Oro.</p>
       <div className="grid w-full gap-3">
         {slots.map(({ n, c }) => (
           <div key={n} className="card flex items-center gap-3 p-3 text-left">
@@ -397,7 +395,40 @@ export function TitleScreen({ onContinue, onNew, onDelete, refresh }: { onContin
           ))}
         </div>
       )}
-      <p className="text-xs text-white/40">Clubes, ligas, jugadores y marcas son inventados.</p>
+      <p className="text-xs text-white/40">Proyecto personal sin fines de lucro. Los jugadores son inventados.</p>
+    </div>
+  );
+}
+
+// ---------- Gala de premios ----------
+
+export function GalaScreen({ c, awards, onDone }: { c: Career; awards: Award[]; onDone: () => void }) {
+  const [i, setI] = useState(0);
+  const a = awards[i];
+  useEffect(() => {
+    sfx.goal();
+    const t = setTimeout(() => sfx.levelUp(), 700);
+    return () => clearTimeout(t);
+  }, [i]);
+  return (
+    <div className="relative flex min-h-dvh flex-col items-center justify-center gap-5 overflow-hidden px-4 py-8 text-center" style={{ background: "radial-gradient(circle at 50% 30%, #4c1d95 0%, #1e1b4b 45%, #020617 85%)" }}>
+      <div className="pointer-events-none absolute inset-0" style={{ background: "conic-gradient(from 200deg at 50% -10%, transparent 0deg, rgba(253,230,138,.18) 12deg, transparent 24deg, transparent 336deg, rgba(253,230,138,.18) 348deg, transparent 360deg)" }} />
+      <div className="pop text-xs font-black uppercase tracking-[0.4em] text-amber-200/80">Gala de premios · Temporada {c.season}</div>
+      <div key={i} className="pop title-font text-4xl text-amber-300 sm:text-6xl" style={{ textShadow: "0 0 30px rgba(251,191,36,.6)" }}>{a.title}</div>
+      <div key={`a${i}`} className="rise relative">
+        <div className="absolute inset-x-6 bottom-2 h-6 rounded-full bg-amber-300/30 blur-xl" />
+        <Avatar look={c.player.look} kit={{ c1: "#111827", c2: "#111827" }} size={260} outfit="suit" hold={a.prop} />
+      </div>
+      <div className="rise max-w-md rounded-2xl bg-black/40 px-5 py-3 backdrop-blur">
+        <div className="title-font text-2xl">{myName(c)}</div>
+        <div className="text-white/80">{a.text}</div>
+      </div>
+      <div className="flex gap-1.5">
+        {awards.map((_, k) => <span key={k} className={`h-2 w-2 rounded-full ${k === i ? "bg-amber-300" : "bg-white/30"}`} />)}
+      </div>
+      <Btn kind="gold" className="w-full max-w-xs py-4 text-xl" onClick={() => (i + 1 < awards.length ? setI(i + 1) : onDone())}>
+        {i + 1 < awards.length ? "Siguiente premio →" : "Bajar del escenario →"}
+      </Btn>
     </div>
   );
 }

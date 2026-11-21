@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
-import type { Team, Look } from "../game/data";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { customCrest, setCustomCrest, type Team, type Look } from "../game/data";
 import { renderAvatar, type Kit } from "../game/draw";
 import { sfx } from "../game/audio";
 
@@ -20,7 +20,74 @@ export function useClubTheme(c1: string, c2: string) {
   }, [c1, c2]);
 }
 
+/** Avisa a todos los escudos cuando alguien carga una imagen propia. */
+function useCrestVersion() {
+  const [v, setV] = useState(0);
+  useEffect(() => {
+    const f = () => setV((x) => x + 1);
+    window.addEventListener("crack-crest", f);
+    return () => window.removeEventListener("crack-crest", f);
+  }, []);
+  return v;
+}
+
 export function Crest({ club, size = 48 }: { club: Team; size?: number }) {
+  useCrestVersion();
+  const custom = customCrest(club.id);
+  if (custom) return <img src={custom} alt={club.name} width={size} height={size} className="shrink-0 object-contain drop-shadow" style={{ width: size, height: size }} />;
+  if (club.flag) return <FlagBadge flag={club.flag} size={size} />;
+  return <DrawnCrest club={club} size={size} />;
+}
+
+function FlagBadge({ flag, size }: { flag: string; size: number }) {
+  return (
+    <span className="inline-flex shrink-0 items-center justify-center rounded-full bg-white/10 ring-2 ring-white/20" style={{ width: size, height: size, fontSize: size * 0.62, lineHeight: 1 }}>
+      {flag}
+    </span>
+  );
+}
+
+/** Cargar un escudo propio para un equipo (se guarda solo en este dispositivo). */
+export function CrestEditor({ club, onClose }: { club: Team; onClose: () => void }) {
+  const file = useRef<HTMLInputElement>(null);
+  const [err, setErr] = useState<string | null>(null);
+  async function load(f: File) {
+    try {
+      const url = URL.createObjectURL(f);
+      const img = new Image();
+      await new Promise((ok, bad) => { img.onload = ok; img.onerror = bad; img.src = url; });
+      const c = document.createElement("canvas");
+      c.width = c.height = 128;
+      const ctx = c.getContext("2d")!;
+      const k = Math.min(128 / img.width, 128 / img.height);
+      ctx.drawImage(img, (128 - img.width * k) / 2, (128 - img.height * k) / 2, img.width * k, img.height * k);
+      URL.revokeObjectURL(url);
+      setCustomCrest(club.id, c.toDataURL("image/png"));
+      window.dispatchEvent(new Event("crack-crest"));
+      onClose();
+    } catch {
+      setErr("No se pudo leer esa imagen.");
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
+      <div className="card pop w-full max-w-sm p-5 text-center" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex justify-center"><Crest club={club} size={96} /></div>
+        <div className="title-font text-xl">{club.name}</div>
+        <p className="mt-1 text-sm text-white/60">Subí una imagen para usarla como escudo. Queda guardada solo en este dispositivo.</p>
+        <input ref={file} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) void load(f); }} />
+        <div className="mt-4 grid gap-2">
+          <Btn kind="gold" className="py-3" onClick={() => file.current?.click()}>📷 Elegir imagen</Btn>
+          {customCrest(club.id) && <Btn kind="ghost" className="py-2 text-sm" onClick={() => { setCustomCrest(club.id, null); window.dispatchEvent(new Event("crack-crest")); onClose(); }}>Volver al escudo dibujado</Btn>}
+          <Btn kind="ghost" className="py-2 text-sm" onClick={onClose}>Cerrar</Btn>
+        </div>
+        {err && <p className="mt-2 text-sm text-rose-300">{err}</p>}
+      </div>
+    </div>
+  );
+}
+
+function DrawnCrest({ club, size }: { club: Team; size: number }) {
   const id = useId().replace(/:/g, "");
   const shield = "M50 4 L92 15 V50 C92 76 73 92 50 101 C27 92 8 76 8 50 V15 Z";
   const p = club.pattern;
@@ -58,7 +125,7 @@ export function Crest({ club, size = 48 }: { club: Team; size?: number }) {
   );
 }
 
-export function Avatar({ look, kit, size = 120, celebrate = false, className = "" }: { look: Look; kit: Kit; size?: number; celebrate?: string | false; className?: string }) {
+export function Avatar({ look, kit, size = 120, celebrate = false, className = "", outfit, hold }: { look: Look; kit: Kit; size?: number; celebrate?: string | false; className?: string; outfit?: "suit"; hold?: "balon" | "bota" | "copa" }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const c = ref.current!;
@@ -66,12 +133,12 @@ export function Avatar({ look, kit, size = 120, celebrate = false, className = "
     let t = 0;
     const tick = () => {
       t += 0.05;
-      renderAvatar(c, look, kit, { celebrate, phase: celebrate ? t * 4 : t });
+      renderAvatar(c, look, kit, { celebrate, phase: celebrate ? t * 4 : t, outfit, hold });
       if (celebrate) raf = requestAnimationFrame(tick);
     };
     tick();
     return () => cancelAnimationFrame(raf);
-  }, [look, kit, celebrate]);
+  }, [look, kit, celebrate, outfit, hold]);
   return <canvas ref={ref} style={{ width: size * 0.8, height: size }} className={className} />;
 }
 

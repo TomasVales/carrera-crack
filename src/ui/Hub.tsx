@@ -1,11 +1,11 @@
 import { useRef, useState, type ReactNode } from "react";
-import { CELEBRATIONS, LEAGUES, NATIONS, POS_INFO, SHOP, STAT_INFO, STAT_KEYS, club, fmtMoney, league, type StatKey } from "../game/data";
+import { CELEBRATIONS, LEAGUES, NATIONS, POS_INFO, SHOP, STAT_INFO, STAT_KEYS, club, fmtMoney, league, type StatKey, type Team } from "../game/data";
 import {
-  STAGE_NAMES, avgRating, exportCareer, has, marketValue, matchInfo, matchRole, myLeague, myName, ovr, standings, topScorers, xpNeeded,
-  type Career, type Cup, type NewsTag,
+  avgRating, exportCareer, has, marketValue, matchInfo, matchRole, myLeague, myName, ovr, stageName, standings, topScorers, xpNeeded,
+  type Career, type Cup, type CupKey, type NewsTag,
 } from "../game/career";
 import { isMuted, setMuted, sfx } from "../game/audio";
-import { Avatar, Bar, Btn, Crest, Stars, clubStars, statColor } from "./common";
+import { Avatar, Bar, Btn, Crest, CrestEditor, Stars, clubStars, statColor } from "./common";
 
 type Tab = "inicio" | "jugador" | "ligas" | "noticias" | "tienda" | "vitrina" | "opciones";
 const TABS: { id: Tab; icon: string; name: string }[] = [
@@ -21,6 +21,7 @@ const TABS: { id: Tab; icon: string; name: string }[] = [
 export type HubActions = {
   onPlay: () => void;
   onSim: () => void;
+  onSimMany: () => void;
   onSpend: (k: StatKey) => void;
   onFocus: (f: StatKey | "descanso") => void;
   onBuy: (id: string) => string;
@@ -151,6 +152,7 @@ function Inicio({ c, actions, go }: { c: Career; actions: HubActions; go: (t: Ta
                   <Btn kind="ghost" className="py-5 text-xl" onClick={actions.onSim}>⏩ SIMULAR</Btn>
                 </>
               )}
+              <button className="btn btn-ghost py-2 text-xs sm:col-span-2" onClick={actions.onSimMany}>⏭️ Simular varios partidos (frena en eventos, mercado o puntos)</button>
             </div>
           </section>
         ) : (
@@ -191,7 +193,7 @@ function Inicio({ c, actions, go }: { c: Career; actions: HubActions; go: (t: Ta
           </div>
         </Card>
         <Card title={`${league(myLeague(c)).flag} ${league(myLeague(c)).name}`} right={<span className="text-xs font-bold text-white/50">{myPos}° puesto</span>}>
-          <MiniTable c={c} leagueId={myLeague(c)} limit={8} />
+          <MiniTable c={c} leagueId={myLeague(c)} limit={6} />
           <button className="mt-2 w-full text-center text-xs font-bold text-white/50" onClick={() => go("ligas")}>Ver todas las ligas →</button>
         </Card>
       </div>
@@ -222,7 +224,7 @@ function Training({ c, actions }: { c: Career; actions: HubActions }) {
   );
 }
 
-function MiniTable({ c, leagueId, limit = 8 }: { c: Career; leagueId: string; limit?: number }) {
+function MiniTable({ c, leagueId, limit = 30, onTeam }: { c: Career; leagueId: string; limit?: number; onTeam?: (t: Team) => void }) {
   const table = standings(c, leagueId).slice(0, limit);
   return (
     <table className="w-full text-sm">
@@ -241,7 +243,7 @@ function MiniTable({ c, leagueId, limit = 8 }: { c: Career; leagueId: string; li
           const t = club(r.id);
           const mine = r.id === c.clubId;
           return (
-            <tr key={r.id} className={mine ? "bg-[var(--c1)]/30 font-black" : i === 0 ? "text-amber-200" : ""}>
+            <tr key={r.id} onClick={() => onTeam?.(t)} className={`${onTeam ? "cursor-pointer hover:bg-white/5" : ""} ${mine ? "bg-[var(--c1)]/30 font-black" : i === 0 ? "text-amber-200" : ""}`}>
               <td className="py-1.5 pl-1">{i === 0 ? "👑" : i + 1}</td>
               <td className="py-1.5">
                 <span className="flex items-center gap-2">
@@ -362,6 +364,7 @@ function Jugador({ c, actions }: { c: Career; actions: HubActions }) {
             )}
             <div className="mt-3 border-t border-white/10 pt-3">
               <Row k={`Selección (${NATIONS.find((n) => n.id === p.nation)?.short})`} v={`${p.caps} PJ · ${p.natGoals} goles`} />
+              <Row k="Balones de Oro" v={p.ballonDor ? "🥇".repeat(Math.min(p.ballonDor, 8)) : "0"} />
             </div>
           </Card>
         </div>
@@ -383,22 +386,25 @@ function Row({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
 
 function Ligas({ c }: { c: Career }) {
   const [sel, setSel] = useState<string>(myLeague(c));
+  const [edit, setEdit] = useState<Team | null>(null);
   const isLeague = LEAGUES.some((l) => l.id === sel);
+  const cups = (["copa", "cont", "nac"] as CupKey[]).map((k) => c.cups[k]).filter((x): x is Cup => !!x);
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {cups.map((cup) => (
+          <button key={cup.key} onClick={() => setSel(cup.key)} className={`btn shrink-0 px-4 py-2 text-sm ${sel === cup.key ? "btn-club" : "btn-ghost"}`}>{cup.icon} {cup.name}</button>
+        ))}
         {LEAGUES.map((l) => (
-          <button key={l.id} onClick={() => setSel(l.id)} className={`btn px-4 py-2 text-sm ${sel === l.id ? "btn-club" : "btn-ghost"}`}>
+          <button key={l.id} onClick={() => setSel(l.id)} className={`btn shrink-0 px-4 py-2 text-sm ${sel === l.id ? "btn-club" : "btn-ghost"}`}>
             {l.flag} {l.name} {l.id === myLeague(c) && "⭐"}
           </button>
         ))}
-        <button onClick={() => setSel("copa")} className={`btn px-4 py-2 text-sm ${sel === "copa" ? "btn-club" : "btn-ghost"}`}>🏆 {c.cup.name}</button>
-        {c.nat && <button onClick={() => setSel("nac")} className={`btn px-4 py-2 text-sm ${sel === "nac" ? "btn-club" : "btn-ghost"}`}>🌍 Copa de Naciones</button>}
       </div>
       {isLeague ? (
         <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
-          <Card title={`Tabla · ${league(sel).name}`} right={<span className="text-xs font-bold text-white/50">Fecha {c.leagues[sel].round}/7</span>}>
-            <MiniTable c={c} leagueId={sel} />
+          <Card title={`${league(sel).flag} ${league(sel).name}`} right={<span className="text-xs font-bold text-white/50">Fecha {c.leagues[sel].round}/{c.leagues[sel].fixtures.length} · tocá un club para su escudo</span>}>
+            <MiniTable c={c} leagueId={sel} onTeam={setEdit} />
           </Card>
           <div className="flex flex-col gap-4">
             <Card title="👟 Goleadores">
@@ -424,8 +430,9 @@ function Ligas({ c }: { c: Career }) {
           </div>
         </div>
       ) : (
-        <Bracket cup={sel === "copa" ? c.cup : c.nat!} mine={sel === "copa" ? c.clubId : c.player.nation} />
+        <Bracket cup={c.cups[sel as CupKey]!} mine={sel === "nac" ? c.player.nation : c.clubId} />
       )}
+      {edit && <CrestEditor club={edit} onClose={() => setEdit(null)} />}
     </div>
   );
 }
@@ -445,11 +452,11 @@ function Result({ f, mine }: { f: { home: string; away: string; hg?: number; ag?
 
 function Bracket({ cup, mine }: { cup: Cup; mine: string }) {
   return (
-    <Card title={cup.name} right={cup.champion ? <span className="rounded-full bg-amber-400 px-3 py-1 text-xs font-black text-slate-900">Campeón: {club(cup.champion).name}</span> : cup.alive ? <span className="text-xs font-bold text-emerald-300">Seguís en carrera</span> : <span className="text-xs font-bold text-rose-300">Eliminado</span>}>
-      <div className="grid gap-4 md:grid-cols-3">
-        {[0, 1, 2].map((s) => (
+    <Card title={`${cup.icon} ${cup.name}`} right={cup.champion ? <span className="rounded-full bg-amber-400 px-3 py-1 text-xs font-black text-slate-900">Campeón: {club(cup.champion).name}</span> : cup.alive ? <span className="text-xs font-bold text-emerald-300">Seguís en carrera</span> : <span className="text-xs font-bold text-rose-300">Eliminado</span>}>
+      <div className={`grid gap-4 ${cup.total === 4 ? "md:grid-cols-4" : "md:grid-cols-3"}`}>
+        {Array.from({ length: cup.total }, (_, s) => (
           <div key={s}>
-            <div className="mb-2 text-xs font-black uppercase tracking-widest text-white/50">{STAGE_NAMES[s]}</div>
+            <div className="mb-2 text-xs font-black uppercase tracking-widest text-white/50">{stageName(cup, s)}</div>
             <ul className="grid gap-1.5">
               {(cup.stages[s] ?? []).map((f, i) => <Result key={i} f={f} mine={mine} />)}
               {!cup.stages[s] && <li className="rounded-lg bg-white/5 px-3 py-2 text-sm text-white/40">Por definirse</li>}
@@ -622,7 +629,7 @@ function Vitrina({ c }: { c: Career }) {
               ["PJ", c.totals.pj],
               ["Goles", c.totals.goals],
               ["Asist.", c.totals.assists],
-              ["Selección", `${p.caps}/${p.natGoals}`],
+              ["Balones", p.ballonDor],
             ].map(([l, v]) => (
               <div key={l}>
                 <div className="title-font text-2xl">{v}</div>

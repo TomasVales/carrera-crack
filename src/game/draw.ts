@@ -21,6 +21,8 @@ export type PlayerDraw = {
   alert?: boolean; // "!" antes de la barrida
   hop?: number; // salto (px)
   wind?: boolean; // agachado preparando la barrida
+  outfit?: "suit"; // traje de gala
+  hold?: "balon" | "bota" | "copa"; // trofeo en las manos
 };
 
 const INK = "#161616";
@@ -109,13 +111,13 @@ export function drawPlayer(ctx: CanvasRenderingContext2D, p: PlayerDraw) {
         ctx.translate(-side * 4.2, 12);
       }
       rr(ctx, side * 4.2 - 2.6 + off * 0.3, -13, 5.2, 11, 2);
-      ctx.fillStyle = shade(kit.c1, -0.08);
+      ctx.fillStyle = p.outfit ? "#334155" : shade(kit.c1, -0.08);
       ctx.fill();
       ctx.stroke();
       const bx = side * 4.2 + off * 0.45 + p.face * 1.2;
       ctx.beginPath();
       ctx.ellipse(bx, -1.6, 3.9, 2.4, 0, 0, Math.PI * 2);
-      ctx.fillStyle = bootFill(ctx, look.boots, bx, -1.6);
+      ctx.fillStyle = p.outfit ? "#0b0b0b" : bootFill(ctx, look.boots, bx, -1.6);
       ctx.fill();
       ctx.stroke();
       if (look.boots === UGLY_BOOTS) {
@@ -127,7 +129,7 @@ export function drawPlayer(ctx: CanvasRenderingContext2D, p: PlayerDraw) {
   }
   // short
   rr(ctx, -8.5, -17, 17, 7, 2.5);
-  ctx.fillStyle = kit.c2;
+  ctx.fillStyle = p.outfit ? "#334155" : kit.c2;
   ctx.fill();
   ctx.stroke();
 
@@ -139,7 +141,8 @@ export function drawPlayer(ctx: CanvasRenderingContext2D, p: PlayerDraw) {
     ctx.fill();
     ctx.stroke();
   };
-  if (cel === "salto" || cel === "rodilla") { arm(-11, -32, 3, 5); arm(11, -32, 3, 5); }
+  if (p.hold) { arm(-10.5, -21, 3.1, 4.4); arm(13, -33, 3, 5, -0.5); }
+  else if (cel === "salto" || cel === "rodilla") { arm(-11, -32, 3, 5); arm(11, -32, 3, 5); }
   else if (cel === "avion") { arm(-15, -24, 6.5, 2.6); arm(15, -24, 6.5, 2.6); }
   else if (cel === "oido") { arm(-10.5, -21); arm(13, -36, 3, 5, -0.4); }
   else if (cel === "baile") { const a = Math.sin(p.phase * 1.6) > 0; arm(-11, a ? -32 : -20, 3, 5); arm(11, a ? -20 : -32, 3, 5); }
@@ -149,14 +152,26 @@ export function drawPlayer(ctx: CanvasRenderingContext2D, p: PlayerDraw) {
 
   // camiseta
   rr(ctx, -9.5, -29, 19, 14, 4.5);
-  ctx.fillStyle = kit.c1;
+  ctx.fillStyle = p.outfit ? "#1e293b" : kit.c1;
   ctx.fill();
   ctx.save();
   ctx.clip();
-  ctx.fillStyle = kit.c2;
-  ctx.fillRect(-2.2, -30, 4.4, 16);
-  ctx.fillStyle = "rgba(255,255,255,.16)";
-  ctx.fillRect(-9.5, -29, 19, 4);
+  if (p.outfit) {
+    // camisa blanca en V, solapas y moño
+    ctx.fillStyle = "#f8fafc";
+    ctx.beginPath(); ctx.moveTo(-4.5, -29); ctx.lineTo(4.5, -29); ctx.lineTo(0, -18); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#64748b";
+    ctx.beginPath(); ctx.moveTo(-4.5, -29); ctx.lineTo(-1, -21); ctx.lineTo(-6, -25); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(4.5, -29); ctx.lineTo(1, -21); ctx.lineTo(6, -25); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#111827";
+    ctx.beginPath(); ctx.moveTo(0, -27); ctx.lineTo(-3.2, -28.6); ctx.lineTo(-3.2, -25.4); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(0, -27); ctx.lineTo(3.2, -28.6); ctx.lineTo(3.2, -25.4); ctx.closePath(); ctx.fill();
+  } else {
+    ctx.fillStyle = kit.c2;
+    ctx.fillRect(-2.2, -30, 4.4, 16);
+    ctx.fillStyle = "rgba(255,255,255,.16)";
+    ctx.fillRect(-9.5, -29, 19, 4);
+  }
   ctx.restore();
   rr(ctx, -9.5, -29, 19, 14, 4.5);
   ctx.stroke();
@@ -169,7 +184,7 @@ export function drawPlayer(ctx: CanvasRenderingContext2D, p: PlayerDraw) {
     ctx.fill();
     ctx.stroke();
   }
-  if (kit.num !== undefined && s >= 1.6 && cel !== "corazon") {
+  if (kit.num !== undefined && s >= 1.6 && cel !== "corazon" && !p.outfit) {
     ctx.fillStyle = kit.c2 === kit.c1 ? INK : kit.c2;
     ctx.font = "900 7px system-ui, sans-serif";
     ctx.textAlign = "center";
@@ -198,6 +213,7 @@ export function drawPlayer(ctx: CanvasRenderingContext2D, p: PlayerDraw) {
   drawBeard(ctx, look.beard, hair, hy, R, p.face);
   drawFace(ctx, look.eyes, hy, p.face, !!cel, p.down);
   drawHair(ctx, look.hair, hair, hy, R, p.face);
+  if (look.eyes === 1 && !cel && !p.down) drawBrows(ctx, hy, p.face);
   if (look.band !== undefined && look.band !== null) {
     ctx.fillStyle = BAND_COLORS[look.band] ?? BAND_COLORS[0];
     ctx.beginPath();
@@ -208,6 +224,14 @@ export function drawPlayer(ctx: CanvasRenderingContext2D, p: PlayerDraw) {
     ctx.fill();
     ctx.lineWidth = 1.2;
     ctx.stroke();
+  }
+  if (p.hold) {
+    // trofeo levantado al costado de la cabeza, por delante de todo
+    ctx.save();
+    ctx.translate(20, -14);
+    ctx.scale(1.25, 1.25);
+    drawTrophy(ctx, p.hold);
+    ctx.restore();
   }
   if (cel === "oido") arm(13, -42, 2.6, 3.2);
   ctx.restore();
@@ -267,12 +291,17 @@ function drawFace(ctx: CanvasRenderingContext2D, eyes: number, hy: number, face:
       ctx.fillStyle = INK;
     }
     if (eyes === 1) {
-      for (const sx of [-1, 1]) {
+      // párpados a media asta: mirada picante
+      ctx.fillStyle = "rgba(0,0,0,0)";
+      for (const sx of [-4.4, 4.4]) {
         ctx.beginPath();
-        ctx.moveTo(fx + sx * 7, hy - 5.2);
-        ctx.lineTo(fx + sx * 2.2, hy - 3.6);
+        ctx.moveTo(fx + sx - 2.6, hy - 1.2);
+        ctx.lineTo(fx + sx + 2.6, hy - 0.4);
+        ctx.lineWidth = 2.2;
         ctx.stroke();
       }
+      ctx.lineWidth = 1.6;
+      ctx.fillStyle = INK;
     }
   }
   ctx.beginPath();
@@ -283,11 +312,65 @@ function drawFace(ctx: CanvasRenderingContext2D, eyes: number, hy: number, face:
   } else if (down) {
     ctx.arc(fx, hy + 7.5, 2.4, Math.PI * 1.15, Math.PI * 1.85);
     ctx.stroke();
+  } else if (eyes === 1) {
+    // media sonrisa canchera
+    ctx.moveTo(fx - 2.6, hy + 6.2);
+    ctx.quadraticCurveTo(fx + 0.5, hy + 7, fx + 3.2, hy + 4.4);
+    ctx.stroke();
   } else {
     ctx.arc(fx, hy + 5, 2.6, Math.PI * 0.15, Math.PI * 0.85);
     ctx.stroke();
   }
   ctx.lineCap = "butt";
+}
+
+function drawBrows(ctx: CanvasRenderingContext2D, hy: number, face: number) {
+  const fx = face * 3.4;
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 2.4;
+  ctx.lineCap = "round";
+  for (const sx of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(fx + sx * 7.4, hy - 4.8);
+    ctx.lineTo(fx + sx * 2, hy - 2.6);
+    ctx.stroke();
+  }
+  ctx.lineCap = "butt";
+  ctx.lineWidth = 1.8;
+}
+
+/** Trofeo en las manos (gala). */
+function drawTrophy(ctx: CanvasRenderingContext2D, kind: "balon" | "bota" | "copa") {
+  const gold = ctx.createLinearGradient(-8, -40, 8, -10);
+  gold.addColorStop(0, "#fef3c7");
+  gold.addColorStop(0.45, "#f59e0b");
+  gold.addColorStop(1, "#b45309");
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 1.6;
+  ctx.fillStyle = gold;
+  if (kind === "balon") {
+    ctx.beginPath(); ctx.arc(0, -25, 8.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "rgba(146,64,14,.55)";
+    ctx.beginPath();
+    for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2 - Math.PI / 2; ctx.lineTo(Math.cos(a) * 3.4, -25 + Math.sin(a) * 3.4); }
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,.7)";
+    ctx.beginPath(); ctx.arc(-3, -28.5, 2, 0, Math.PI * 2); ctx.fill();
+  } else if (kind === "bota") {
+    ctx.beginPath();
+    ctx.moveTo(-6, -36); ctx.lineTo(1, -36); ctx.lineTo(1, -24); ctx.quadraticCurveTo(9, -23, 10, -18);
+    ctx.lineTo(-7, -18); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#78350f"; ctx.fillRect(-8, -18, 19, 3);
+  } else {
+    ctx.beginPath();
+    ctx.moveTo(-8, -38); ctx.lineTo(8, -38); ctx.quadraticCurveTo(8, -26, 2, -24); ctx.lineTo(2, -18); ctx.lineTo(5, -16);
+    ctx.lineTo(-5, -16); ctx.lineTo(-2, -18); ctx.lineTo(-2, -24); ctx.quadraticCurveTo(-8, -26, -8, -38);
+    ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(-8, -33, 3, Math.PI * 0.5, Math.PI * 1.5); ctx.stroke();
+    ctx.beginPath(); ctx.arc(8, -33, 3, -Math.PI * 0.5, Math.PI * 0.5); ctx.stroke();
+  }
+  ctx.lineWidth = 1.8;
 }
 
 function drawBeard(ctx: CanvasRenderingContext2D, beard: number, color: string, hy: number, R: number, face: number) {
@@ -430,7 +513,7 @@ export function drawBall(ctx: CanvasRenderingContext2D, x: number, y: number, z:
 }
 
 /** Dibuja un jugador en un canvas chico (vista previa / tarjeta). */
-export function renderAvatar(canvas: HTMLCanvasElement, look: Look, kit: Kit, opts: { celebrate?: string | false; phase?: number } = {}) {
+export function renderAvatar(canvas: HTMLCanvasElement, look: Look, kit: Kit, opts: { celebrate?: string | false; phase?: number; outfit?: "suit"; hold?: "balon" | "bota" | "copa" } = {}) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth || canvas.width;
   const h = canvas.clientHeight || canvas.height;
@@ -442,5 +525,5 @@ export function renderAvatar(canvas: HTMLCanvasElement, look: Look, kit: Kit, op
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   const s = (h * 0.8) / 60;
-  drawPlayer(ctx, { x: w / 2, y: h * 0.93, s, look, kit, face: 1, phase: opts.phase ?? 0, moving: 0, celebrate: opts.celebrate });
+  drawPlayer(ctx, { x: w / 2, y: h * 0.93, s, look, kit, face: 1, phase: opts.phase ?? 0, moving: 0, celebrate: opts.celebrate, outfit: opts.outfit, hold: opts.hold });
 }
