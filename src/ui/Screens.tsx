@@ -1,11 +1,22 @@
 import { useEffect, useState } from "react";
 import { LEAGUES, POS_INFO, STAT_INFO, club, fmtMoney, league } from "../game/data";
 import {
-  EVENTS, eventText, hallOfFame, loadSlot, marketValue, myName, negotiate, ovr,
+  EVENTS, agentOf, eventText, hallOfFame, loadSlot, marketValue, myName, negotiate, ovr,
   type Award, type Career, type Offer, type Report, type Role, type SeasonSummary,
 } from "../game/career";
 import { sfx } from "../game/audio";
 import { Avatar, Btn, Crest, RatingBadge, Stars, clubStars } from "./common";
+import { shareCareerCard } from "./shareCard";
+
+function ShareBtn({ c }: { c: Career }) {
+  const [msg, setMsg] = useState<string | null>(null);
+  return (
+    <div className="grid gap-1">
+      <Btn kind="ghost" className="py-3" onClick={async () => setMsg(await shareCareerCard(c))}>📤 Compartir mi tarjeta</Btn>
+      {msg && <p className="pop text-center text-sm font-bold">{msg}</p>}
+    </div>
+  );
+}
 
 // ---------- Resultado del partido ----------
 
@@ -127,7 +138,7 @@ export function MarketScreen({ c, onSign, onStay, onChange }: { c: Career; onSig
         <div className="text-xs font-black uppercase tracking-widest text-amber-300">Mercado de {c.windowKind}</div>
         <h1 className="title-font text-3xl">¡Te llegaron ofertas!</h1>
         <p className="mt-1 text-white/70">
-          Tu representante, <b>Beppe "Il Furbo" Caruso</b>, te muestra lo que hay. Valor: <b className="text-emerald-300">{fmtMoney(marketValue(c))}</b> · OVR {ovr(c)}
+          Tu representante, <b>{agentOf(c).emoji} {agentOf(c).name}</b>, te muestra lo que hay. Valor: <b className="text-emerald-300">{fmtMoney(marketValue(c))}</b> · OVR {ovr(c)}
         </p>
         <div className="mt-3 flex items-center gap-3 rounded-xl bg-white/5 p-3 text-sm">
           <Crest club={cur} size={34} />
@@ -169,10 +180,10 @@ function OfferCard({ c, o, open, onOpen, onSign, onChange }: { c: Career; o: Off
           <div className="title-font text-xl">{cl.name}</div>
           <div className="text-xs font-bold text-white/70">{lg.flag} {lg.name} · {cl.stadium}</div>
           <Stars n={clubStars(cl.strength)} />
-          <div className="text-sm text-white/70">Ofrecen {fmtMoney(o.salary)}/sem · {o.years} años · {o.role}</div>
+          <div className="text-sm text-white/70">{o.loan ? `🔁 A PRÉSTAMO hasta fin de temporada · titular · sueldo ${fmtMoney(o.salary)}/sem (lo sigue pagando tu club)` : `Ofrecen ${fmtMoney(o.salary)}/sem · ${o.years} años · ${o.role}`}</div>
         </div>
         <span className={`rounded-full px-3 py-1 text-xs font-black ${o.status === "acuerdo" ? "bg-emerald-500 text-slate-900" : o.status === "rota" ? "bg-rose-600" : "bg-white/10"}`}>
-          {o.status === "acuerdo" ? "¡ACUERDO!" : o.status === "rota" ? "ROTA" : open ? "▲" : "Negociar ▼"}
+          {o.loan ? (open ? "▲" : "Ver ▼") : o.status === "acuerdo" ? "¡ACUERDO!" : o.status === "rota" ? "ROTA" : open ? "▲" : "Negociar ▼"}
         </span>
       </button>
       {open && o.status !== "rota" && (
@@ -187,7 +198,12 @@ function OfferCard({ c, o, open, onOpen, onSign, onChange }: { c: Career; o: Off
               ))}
             </div>
           )}
-          {o.status === "acuerdo" ? (
+          {o.loan ? (
+            <>
+              <p className="text-sm text-white/70">Jugás de titular en {cl.name} para sumar minutos y después volvés a tu club. Si rendís bien, el DT te va a mirar distinto.</p>
+              <Btn kind="gold" className="py-4 text-xl" onClick={onSign}>IRME A PRÉSTAMO A {cl.short} 🔁</Btn>
+            </>
+          ) : o.status === "acuerdo" ? (
             <Btn kind="gold" className="py-4 text-xl" onClick={onSign}>FIRMAR CON {cl.short} ✍️</Btn>
           ) : (
             <>
@@ -250,6 +266,23 @@ export function SeasonEndScreen({ c, s, onNext }: { c: Career; s: SeasonSummary;
           </div>
         ))}
       </div>
+      {s.club && (
+        <div className="card rise grid gap-2 p-4">
+          <div className="flex items-center gap-3">
+            <Crest club={club(s.club.id)} size={36} />
+            <div className="flex-1">
+              <div className="font-black">{club(s.club.id).name}</div>
+              <div className="text-xs text-white/50">Fuerza del plantel para la próxima temporada</div>
+            </div>
+            <div className="title-font text-2xl">
+              {s.club.before} → <span className={s.club.after > s.club.before ? "text-emerald-300" : s.club.after < s.club.before ? "text-rose-300" : ""}>{s.club.after}</span>
+            </div>
+          </div>
+          {s.club.signings.map((x) => <div key={x} className="pop rounded-xl bg-emerald-500/15 px-3 py-2 text-sm font-bold text-emerald-200">✍️ Llega {x}</div>)}
+          {s.club.sales.map((x) => <div key={x} className="rounded-xl bg-rose-500/15 px-3 py-2 text-sm font-bold text-rose-200">👋 Se va {x}</div>)}
+          {s.club.after === s.club.before && <div className="text-sm text-white/60">El club mantiene el plantel.</div>}
+        </div>
+      )}
       {s.awards.length > 0 && (
         <div className="card rise grid gap-2 p-4">
           <div className="font-black">Premios</div>
@@ -280,11 +313,19 @@ export function SeasonEndScreen({ c, s, onNext }: { c: Career; s: SeasonSummary;
           <b>{s.ballonWinner}</b>
         </div>
       </div>
+      {s.achievements.length > 0 && (
+        <div className="card rise grid gap-2 p-4">
+          <div className="font-black">🏅 Logros nuevos</div>
+          {s.achievements.map((a) => <div key={a} className="pop rounded-xl bg-amber-400/15 px-3 py-2 text-sm font-bold text-amber-200">{a}</div>)}
+        </div>
+      )}
       <div className="card rise p-4 text-sm text-white/80">
         <div className="mb-1 font-black text-white">Pretemporada</div>
+        {s.loanBack && <b className="block text-violet-200">🔁 Terminó tu préstamo: volvés a {s.loanBack}.</b>}
         Cumplís {c.player.age} años. {s.growth.length ? `Evolución: ${s.growth.join(", ")}.` : ""} {s.renewed ? "El club te renovó el contrato con aumento. " : ""}
         {s.retire && <b className="text-amber-300">Tu cuerpo dice basta: es hora de colgar los botines.</b>}
       </div>
+      <ShareBtn c={c} />
       <Btn kind="gold" className="py-5 text-2xl" onClick={onNext}>{s.retire ? "DESPEDIRME 👋" : "SIGUIENTE TEMPORADA →"}</Btn>
     </div>
   );
@@ -328,6 +369,7 @@ export function RetiredScreen({ c, onNew }: { c: Career; onNew: () => void }) {
           {c.trophies.map((t, i) => <div key={i} className="text-sm text-amber-200">{t}</div>)}
         </div>
       )}
+      <ShareBtn c={c} />
       <Btn kind="gold" className="py-5 text-2xl" onClick={onNew}>NUEVA CARRERA</Btn>
     </div>
   );

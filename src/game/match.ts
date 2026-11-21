@@ -2,13 +2,14 @@
 // compañero, defensores (con barridas avisadas), barrera, arquero, física de pelota,
 // mira, vaselina, comba, repetición del gol, clima y modo práctica.
 import { sfx } from "./audio";
+import { buzz } from "./settings";
 import { clamp, pick, rand, seeded, type Look, type Stats } from "./data";
 import { drawBall, drawPlayer, drawShadow, type Kit } from "./draw";
 
 export type PlayKind = "mano" | "contra" | "pared" | "afuera" | "banda" | "libre" | "penal" | "practica" | "defensa" | "posesion" | "corner";
 export type PlayOutcome = "gol" | "asist" | "atajada" | "palo" | "afuera" | "perdida" | "tiempo" | "recupero" | "golrival" | "posesion";
 export type Weather = "sol" | "noche" | "lluvia";
-export type PlayResult = { outcome: PlayOutcome; good: number; bad: number; shots?: number; goals?: number };
+export type PlayResult = { outcome: PlayOutcome; good: number; bad: number; shots?: number; goals?: number; kinds?: string[]; moves?: string[]; drillScore?: number };
 
 export type PlaySetup = {
   kind: PlayKind;
@@ -26,6 +27,14 @@ export type PlaySetup = {
   crowd: [string, string];
   weather: Weather;
   decisive?: boolean; // penal decisivo de una tanda
+  difficulty?: number; // 0 fácil · 1 normal · 2 difícil
+  derby?: string | null; // nombre del clásico, si lo es
+  tutorial?: boolean; // muestra ayudas en pantalla
+  touch?: boolean; // controles táctiles (para los textos de ayuda)
+  moves?: string[]; // jugadas especiales desbloqueadas
+  drill?: boolean; // minijuego de tiro al blanco (con kind "practica")
+  banners?: { text: string; c1: string; c2: string }[]; // banderas en la tribuna
+  boo?: boolean; // la tribuna te silba
 };
 
 export const PLAY_NAMES: Record<PlayKind, string> = {
@@ -129,11 +138,26 @@ export class Arcade {
   private shotT = 0;
   private jumpT = 0;
   private crowd: { x: number; y: number; c: string; p: number }[] = [];
+  private crowdByColor = new Map<string, { x: number; y: number; c: string; p: number }[]>();
   private rain: { x: number; y: number; s: number }[] = [];
   private keys = new Set<string>();
   joy = { x: 0, y: 0 };
   private touchSprint = false;
   private done = false;
+  // pausa y joystick de consola
+  paused = false;
+  private padDir = { x: 0, y: 0 };
+  private padSprint = false;
+  private padPrev: boolean[] = [];
+  private rawDt = 1 / 60;
+  private ownSince = -1;
+  // jugadas especiales, tipos de gol y minijuego
+  private moves: Set<string>;
+  private movesUsed: string[] = [];
+  private goalKinds: string[] = [];
+  private shotTag: string | null = null;
+  private drillTarget = { side: 1, high: true };
+  private drillScore = 0;
   // pelota parada
   private setPiece = false;
   private aim = 0;
@@ -156,23 +180,34 @@ export class Arcade {
   constructor(private canvas: HTMLCanvasElement, private s: PlaySetup, private onEnd: (r: PlayResult) => void) {
     this.ctx = canvas.getContext("2d")!;
     this.practice = s.kind === "practica";
+    this.moves = new Set(s.moves ?? []);
     this.setPiece = s.kind === "libre" || s.kind === "penal";
-    this.totalTime = this.timeLeft = ({ mano: 9, contra: 11, pared: 12, afuera: 8, banda: 12, libre: 10, penal: 8, practica: 60, defensa: 9, posesion: 10, corner: 8 } as const)[s.kind] + (s.epic ? 2 : 0);
+    this.totalTime = this.timeLeft = s.drill ? 30 : ({ mano: 9, contra: 11, pared: 12, afuera: 8, banda: 12, libre: 10, penal: 8, practica: 60, defensa: 9, posesion: 10, corner: 8 } as const)[s.kind] + (s.epic ? 2 : 0);
     this.rng = seeded(s.rivalSeed);
+    if (s.difficulty !== undefined && s.kind !== "practica") s.rival = clamp(s.rival + (s.difficulty - 1) * 0.2, 0, 1);
     this.setup();
     for (let i = 0; i < 300; i++) {
       const c = rand() < 0.45 ? s.crowd[0] : rand() < 0.6 ? s.crowd[1] : pick(["#e5e7eb", "#94a3b8", "#fbbf24", "#1e293b"]);
       this.crowd.push({ x: -300 + rand() * (W + 600), y: -160 + rand() * 135, c, p: rand() * 6 });
     }
+    for (const p of this.crowd) {
+      const g = this.crowdByColor.get(p.c);
+      if (g) g.push(p);
+      else this.crowdByColor.set(p.c, [p]);
+    }
     if (s.weather === "lluvia") for (let i = 0; i < 140; i++) this.rain.push({ x: rand(), y: rand(), s: 0.7 + rand() * 0.6 });
     window.addEventListener("keydown", this.kd);
     window.addEventListener("keyup", this.ku);
+    document.addEventListener("visibilitychange", this.vis);
     this.last = performance.now();
     this.raf = requestAnimationFrame(this.loop);
     sfx.whistle();
+    if (s.derby) this.flares();
+    if (s.boo) setTimeout(() => sfx.boo(), 300);
+    if (s.drill) this.newDrillTarget();
     this.banner = {
       text: s.decisive ? "¡PENAL DECISIVO!" : s.epic ? "¡MINUTO 90!" : PLAY_NAMES[s.kind],
-      sub: s.decisive ? "Si lo metés, pasan de ronda" : s.epic ? "Última chance. Todo o nada." : PLAY_TIPS[s.kind],
+      sub: s.decisive ? "Si lo metés, pasan de ronda" : s.epic ? "Última chance. Todo o nada." : s.derby ? `🔥 ${s.derby} · ${PLAY_TIPS[s.kind]}` : PLAY_TIPS[s.kind],
       t: 0,
       color: s.epic || s.decisive ? "#f97316" : "#fde047",
     };
@@ -182,13 +217,31 @@ export class Arcade {
     cancelAnimationFrame(this.raf);
     window.removeEventListener("keydown", this.kd);
     window.removeEventListener("keyup", this.ku);
+    document.removeEventListener("visibilitychange", this.vis);
   }
+
+  /** Si cambiás de pestaña o te llaman, la jugada se pausa sola. */
+  private vis = () => {
+    if (document.hidden && !this.done) this.setPaused(true);
+  };
+  setPaused(on: boolean) {
+    if (this.done || this.paused === on) return;
+    this.paused = on;
+    this.keys.clear();
+    this.charge = -1;
+    this.onPause?.(on);
+  }
+  togglePause() {
+    this.setPaused(!this.paused);
+  }
+  /** Lo usa la pantalla para mostrar el menú de pausa. */
+  onPause?: (on: boolean) => void;
 
   /** Para la práctica: terminar cuando el jugador quiera. */
   quit() {
     if (this.done) return;
     this.done = true;
-    this.onEnd({ outcome: "tiempo", good: this.good, bad: this.bad, shots: this.pShots, goals: this.pGoals });
+    this.onEnd({ outcome: "tiempo", good: this.good, bad: this.bad, shots: this.pShots, goals: this.pGoals, kinds: this.goalKinds, moves: this.movesUsed, drillScore: this.drillScore });
   }
 
   // ---------- Entrada ----------
@@ -196,6 +249,8 @@ export class Arcade {
     const k = e.key.toLowerCase();
     if ([" ", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) e.preventDefault();
     if (e.repeat) return;
+    if (k === "escape" || k === "p") { this.togglePause(); return; }
+    if (this.paused) return;
     this.keys.add(k);
     if (k === " ") this.pressShoot(true);
     if (k === "e") this.pressPass();
@@ -213,11 +268,13 @@ export class Arcade {
   }
 
   pressShoot(down: boolean) {
+    if (this.paused) return;
     if (this.replay || (this.result && (this.result === "gol" || this.result === "asist"))) {
       if (down && !this.practice) this.skipToEnd();
       return;
     }
     if (this.intro > 0 || this.result) return;
+    if (down && this.moves.has("chilena") && this.altHeld() && this.tryChilena()) return;
     if (down && this.tryHeader()) return;
     if (down && this.ball.owner !== this.me && this.ball.owner !== this.mate && !this.setPiece) {
       this.meSlide();
@@ -226,7 +283,7 @@ export class Arcade {
     if (this.canShootNow()) {
       if (down) this.charge = 0;
       else if (this.charge >= 0) {
-        const colocado = this.keys.has("shift") || this.touchSprint;
+        const colocado = this.altHeld();
         this.shoot(this.me, this.charge, colocado);
         this.charge = -1;
       }
@@ -235,6 +292,7 @@ export class Arcade {
     } else if (!down) this.charge = -1;
   }
   pressPass() {
+    if (this.paused) return;
     if (this.intro > 0 || this.result || this.setPiece) return;
     const o = this.ball.owner;
     if (o && (o.role === "def" || o.role === "att")) {
@@ -246,10 +304,24 @@ export class Arcade {
       }
       return;
     }
-    if (this.ball.owner === this.me) this.pass(this.me);
-    else if (this.ball.owner === this.mate) this.wantPared = 1;
+    if (this.ball.owner === this.me) {
+      if (this.moves.has("taco") && this.mate && this.mate.x < this.me.x - 15) {
+        this.pass(this.me, 0.5);
+        this.good += 1;
+        this.movesUsed.push("taco");
+        this.popText("¡DE TACO!", "#f0abfc");
+        sfx.ooh();
+      } else if (this.moves.has("rabona") && this.altHeld()) {
+        this.pass(this.me, 0.25);
+        this.good += 1;
+        this.movesUsed.push("rabona");
+        this.popText("¡DE RABONA!", "#f0abfc");
+        sfx.ooh();
+      } else this.pass(this.me);
+    } else if (this.ball.owner === this.mate) this.wantPared = 1;
   }
   pressFeint() {
+    if (this.paused) return;
     if (this.intro > 0 || this.result || this.setPiece) return;
     const slider = this.ents.find((d) => d.role === "def" && (d.tk === "slide" || d.tk === "wind") && len(d.x - this.me.x, d.y - this.me.y) < 90);
     if (slider && this.me.hz === 0) {
@@ -263,26 +335,51 @@ export class Arcade {
     if (this.feintCd > 0 || this.ball.owner !== this.me) return;
     this.feintCd = 1;
     const st = this.s.stats;
+    if (this.moves.has("cano")) {
+      const d = this.ents.find((e) => e.role === "def" && e.tk === "none" && e.stun <= 0 && e.x - this.me.x > 6 && e.x - this.me.x < 42 && Math.abs(e.y - this.me.y) < 18);
+      if (d && rand() < 0.55 + st.regate / 200) {
+        d.stun = 1.1; d.cd = 1.5; d.vx = 0; d.vy = 0;
+        this.me.x = d.x + 28;
+        this.me.vx = 160;
+        this.good += 1.5;
+        this.movesUsed.push("cano");
+        this.popText("¡CAÑO!", "#f0abfc");
+        sfx.ooh();
+        sfx.chantBoost(3);
+        buzz(25);
+        return;
+      }
+    }
+    const elastica = this.moves.has("elastica") && this.altHeld();
     const dir = this.moveDir();
     const side = dir.y !== 0 ? Math.sign(dir.y) : rand() < 0.5 ? -1 : 1;
-    this.me.vy += side * 260;
-    this.me.vx += 40;
+    this.me.vy += side * (elastica ? 380 : 260);
+    this.me.vx += elastica ? 70 : 40;
     let fooled = false;
     for (const d of this.ents) {
       if (d.role !== "def") continue;
-      if (len(d.x - this.me.x, d.y - this.me.y) < 95 && rand() < 0.3 + st.regate / 120 + (d.tk === "wind" ? 0.3 : 0)) {
-        d.stun = 0.35 + st.regate / 220;
+      if (len(d.x - this.me.x, d.y - this.me.y) < 95 && rand() < 0.3 + st.regate / 120 + (d.tk === "wind" ? 0.3 : 0) + (elastica ? 0.35 : 0)) {
+        d.stun = 0.35 + st.regate / 220 + (elastica ? 0.35 : 0);
         d.tk = "none";
         d.cd = 1;
         d.vx *= -0.3;
         fooled = true;
       }
     }
-    if (fooled) {
+    if (fooled && elastica) {
+      this.good += 1.5;
+      this.movesUsed.push("elastica");
+      this.popText("¡ELÁSTICA!", "#f0abfc");
+      sfx.ooh();
+      sfx.chantBoost(3);
+    } else if (fooled) {
       this.good++;
       this.popText("¡AMAGUE!", "#a5f3fc");
       sfx.ooh();
     }
+  }
+  private altHeld() {
+    return this.keys.has("shift") || this.touchSprint || this.padSprint;
   }
   setTouchSprint(on: boolean) {
     this.touchSprint = on;
@@ -331,9 +428,37 @@ export class Arcade {
     this.shotT = this.t;
     this.pShots++;
     this.cross = null;
+    this.shotTag = "cabeza";
     sfx.kick(0.6);
     this.popText("¡CABEZAZO!", "#fde68a");
     this.timeScale = 0.6;
+    return true;
+  }
+
+  /** Chilena: pelota en el aire cerca tuyo, de espaldas al arco. */
+  private tryChilena() {
+    const b = this.ball;
+    if (b.owner || b.shot || this.result) return false;
+    if (b.z < 14 || b.z > 72 || len(b.x - this.me.x, b.y - this.me.y) > 36) return false;
+    const plan = this.shotPlan(this.me);
+    const tiro = this.s.stats.tiro;
+    const a0 = Math.atan2(plan.ty - b.y, GX + 6 - b.x) + (rand() - 0.5) * 2 * Math.max(0.03, 0.16 - tiro / 700);
+    const power = 640 + tiro * 2.5;
+    b.vx = Math.cos(a0) * power; b.vy = Math.sin(a0) * power; b.vz = 10;
+    b.shot = true; b.kind = "normal"; b.byMate = false; b.byRival = false; b.last = this.me; b.ax = 0; b.ay = 0; b.curveT = 0;
+    this.me.hvz = 270;
+    this.me.kick = 1;
+    this.shotT = this.t;
+    this.pShots++;
+    this.cross = null;
+    this.shotTag = "chilena";
+    this.movesUsed.push("chilena");
+    this.good += 1;
+    sfx.kick(1);
+    sfx.chantBoost(3);
+    buzz(40);
+    this.popText("¡CHILENA!", "#f0abfc");
+    this.timeScale = 0.4;
     return true;
   }
 
@@ -347,8 +472,8 @@ export class Arcade {
   }
   private moveDir() {
     const k = this.keyDir();
-    let x = k.x + this.joy.x;
-    let y = k.y + this.joy.y;
+    let x = k.x + this.joy.x + this.padDir.x;
+    let y = k.y + this.joy.y + this.padDir.y;
     const n = len(x, y);
     if (n > 1) { x /= n; y /= n; }
     return { x, y };
@@ -418,7 +543,7 @@ export class Arcade {
         this.me = this.ent("me", GX - 140, GY + 6, myKit, look);
         break;
       case "practica":
-        this.me = this.ent("me", 560, GY, myKit, look);
+        this.me = this.ent("me", this.s.drill ? 700 : 560, GY, myKit, look);
         break;
       case "defensa": {
         // el rival arranca lejos; vos estás entre él y tu arco
@@ -480,6 +605,7 @@ export class Arcade {
   private shoot(who: Ent, charge: number, colocado = false) {
     const st = this.s.stats;
     const isMe = who === this.me;
+    if (isMe) this.shotTag = null;
     const tiro = isMe ? st.tiro : who.role === "att" ? 55 + this.s.rival * 30 : 70;
     const plan = this.shotPlan(who);
     const c = clamp(charge, 0.05, 1.15);
@@ -532,6 +658,7 @@ export class Arcade {
     who.kick = 1;
     if (isMe) this.pShots++;
     sfx.kick(c);
+    if (who === this.me) buzz(12 + Math.round(c * 25));
     this.burstGrass(b.x, b.y, 10);
     this.shake = Math.max(this.shake, 3 + c * 4);
     this.timeScale = this.s.epic || this.s.decisive ? 0.4 : 0.7;
@@ -551,7 +678,7 @@ export class Arcade {
     this.shoot(this.mate, 0.75 + rand() * 0.2);
   }
 
-  private pass(from: Ent) {
+  private pass(from: Ent, errMul = 1) {
     const isMe = from === this.me;
     const target = isMe ? this.mate : this.me;
     from.kick = 0.8;
@@ -565,7 +692,7 @@ export class Arcade {
     const tLead = d / speed;
     let tx = target.x + target.vx * tLead + (isMe ? 30 : 20);
     let ty = target.y + target.vy * tLead;
-    const err = (1 - pase / 110) * 40;
+    const err = (1 - pase / 110) * 40 * errMul;
     tx += (rand() - 0.5) * err;
     ty += (rand() - 0.5) * err;
     if (this.s.kind === "banda" && isMe) {
@@ -597,11 +724,41 @@ export class Arcade {
   private loop = (now: number) => {
     const raw = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
-    if (this.replay) this.updateReplay(raw);
-    else this.update(raw * this.timeScale, raw);
+    this.rawDt = this.paused ? 0 : raw;
+    this.pollPad();
+    if (!this.paused) {
+      if (this.replay) this.updateReplay(raw);
+      else this.update(raw * this.timeScale, raw);
+    }
     this.render();
     if (!this.done) this.raf = requestAnimationFrame(this.loop);
   };
+
+  /** Joystick de consola (Xbox / PlayStation / genérico): A patear, X pase, B amague, gatillos correr, Start pausa. */
+  private pollPad() {
+    const pads = typeof navigator.getGamepads === "function" ? navigator.getGamepads() : [];
+    const pad = [...pads].find((p) => p && p.connected);
+    if (!pad) return;
+    const b = (i: number) => !!pad.buttons[i]?.pressed;
+    const now = pad.buttons.map((x) => x.pressed);
+    const edge = (i: number) => b(i) && !this.padPrev[i];
+    const up = (i: number) => !b(i) && this.padPrev[i];
+    this.padPrev = now;
+    if (edge(9) || edge(8)) this.togglePause();
+    if (this.paused) { this.padDir = { x: 0, y: 0 }; return; }
+    let x = pad.axes[0] ?? 0, y = pad.axes[1] ?? 0;
+    if (Math.hypot(x, y) < 0.2) { x = 0; y = 0; }
+    if (b(14)) x = -1;
+    if (b(15)) x = 1;
+    if (b(12)) y = -1;
+    if (b(13)) y = 1;
+    this.padDir = { x, y };
+    this.padSprint = b(4) || b(5) || b(6) || b(7);
+    if (edge(0)) this.pressShoot(true);
+    if (up(0)) this.pressShoot(false);
+    if (edge(2) || edge(3)) this.pressPass();
+    if (edge(1)) this.pressFeint();
+  }
 
   private update(dt: number, raw: number) {
     this.t += dt;
@@ -716,7 +873,7 @@ export class Arcade {
       return;
     }
     const st = this.s.stats;
-    const wantSprint = this.keys.has("shift") || this.touchSprint || len(this.joy.x, this.joy.y) > 0.92;
+    const wantSprint = this.altHeld() || len(this.joy.x, this.joy.y) > 0.92;
     const moving = d.x !== 0 || d.y !== 0;
     if (wantSprint && moving && this.sprint > 0) this.sprint = Math.max(0, this.sprint - dt * (0.55 - st.fisico / 400));
     else this.sprint = Math.min(1, this.sprint + dt * 0.25);
@@ -931,6 +1088,7 @@ export class Arcade {
     b.shot = false;
     this.burstGrass(d.x, d.y, 12);
     if (victim) victim.stun = 0.5;
+    if (victim === this.me) buzz(slide ? [40, 30, 60] : 35);
     sfx.save();
     this.bad++;
     this.popText(slide ? "¡QUÉ BARRIDA!" : "¡TE LA ROBARON!", "#fca5a5");
@@ -988,6 +1146,7 @@ export class Arcade {
         b.vy += (rand() - 0.5) * 200;
         b.curveT = 0;
         sfx.post();
+        buzz(70);
         this.shake = 8;
         this.finish("palo", "¡PALO!", "Por centímetros...", "#e5e7eb", 1.6);
         sfx.ooh();
@@ -1105,6 +1264,7 @@ export class Arcade {
     if (b.byRival) {
       this.shake = 10;
       sfx.ooh();
+      buzz(120);
       this.finish("golrival", "GOL DEL RIVAL", "No llegaste a cortarlo...", "#fca5a5", 1.6);
       return;
     }
@@ -1114,12 +1274,26 @@ export class Arcade {
     this.timeScale = 0.35;
     this.goalT = this.t;
     sfx.goal();
+    sfx.chantBoost(10);
+    buzz([90, 60, 90, 60, 220]);
     if (byMate && this.mate) this.mate.celebrate = "salto";
     this.me.celebrate = byMate ? "salto" : this.s.celebration || "salto";
     this.confetti();
     this.flares();
     if (!byMate) this.pGoals++;
-    const sub = byMate ? "¡Asistencia tuya!" : b.kind === "chip" ? "¡Qué vaselina!" : b.kind === "curve" ? "¡Con comba al ángulo!" : this.s.epic ? "¡EN EL MINUTO 90!" : this.setPiece ? "¡Golazo de pelota parada!" : "¡La metiste!";
+    let gk = "";
+    if (!byMate) {
+      gk = this.shotTag ?? (this.s.kind === "libre" ? "libre" : this.s.kind === "penal" ? "penal" : b.kind === "chip" ? "vaselina" : b.kind === "curve" ? "comba" : "normal");
+      this.goalKinds.push(gk);
+    }
+    let sub = byMate ? "¡Asistencia tuya!" : gk === "chilena" ? "¡DE CHILENA! ¡Increíble!" : gk === "cabeza" ? "¡De cabeza!" : b.kind === "chip" ? "¡Qué vaselina!" : b.kind === "curve" ? "¡Con comba al ángulo!" : this.s.epic ? "¡EN EL MINUTO 90!" : this.setPiece ? "¡Golazo de pelota parada!" : "¡La metiste!";
+    if (this.s.drill) {
+      const t = this.drillTarget;
+      const off = b.y - GY;
+      const hit = Math.sign(off) === t.side && Math.abs(off) > GW * 0.4 && (t.high ? b.z > BAR * 0.45 : b.z <= BAR * 0.55);
+      this.drillScore += hit ? 3 : 1;
+      sub = hit ? "🎯 ¡EN EL BLANCO! +3" : "Gol, pero fuera del blanco: +1";
+    }
     this.finish(byMate ? "asist" : "gol", byMate ? "¡GOOOL!" : pick(["¡GOOOLAZO!", "¡GOOOOL!", "¡A COBRAR!"]), sub, "#fde047", this.practice ? 1.6 : 2.2);
   }
 
@@ -1135,7 +1309,7 @@ export class Arcade {
   private finishNow() {
     if (this.done) return;
     this.done = true;
-    this.onEnd({ outcome: this.result ?? "tiempo", good: this.good, bad: this.bad, shots: this.pShots, goals: this.pGoals });
+    this.onEnd({ outcome: this.result ?? "tiempo", good: this.good, bad: this.bad, shots: this.pShots, goals: this.pGoals, kinds: this.goalKinds, moves: this.movesUsed });
   }
 
   private skipToEnd() {
@@ -1145,12 +1319,31 @@ export class Arcade {
     this.finishNow();
   }
 
+  private newDrillTarget() {
+    this.drillTarget = { side: rand() < 0.5 ? -1 : 1, high: rand() < 0.5 };
+  }
+
+  private drawDrillTarget(ctx: CanvasRenderingContext2D) {
+    if (!this.s.drill || this.result) return;
+    const t = this.drillTarget;
+    const y = GY + t.side * GW * 0.68, z = t.high ? BAR * 0.72 : BAR * 0.25;
+    const pulse = 1 + Math.sin(this.t * 8) * 0.12;
+    ctx.save();
+    ctx.translate(GX + 4, y - z);
+    ctx.strokeStyle = "#f43f5e";
+    ctx.fillStyle = "rgba(244,63,94,.25)";
+    ctx.lineWidth = 3;
+    for (const r of [14, 8]) { ctx.beginPath(); ctx.arc(0, 0, r * pulse, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    ctx.restore();
+  }
+
   private resetPractice() {
+    if (this.s.drill) this.newDrillTarget();
     this.result = null;
     this.banner = null;
     this.replay = null;
     this.timeScale = 1;
-    this.me.x = 480 + rand() * 200;
+    this.me.x = this.s.drill ? 660 + rand() * 90 : 480 + rand() * 200;
     this.me.y = GY + (rand() - 0.5) * 300;
     this.me.vx = 0; this.me.vy = 0; this.me.celebrate = false;
     this.gk.x = GX - 16; this.gk.y = GY; this.gk.dive = 0; this.gk.vx = 0; this.gk.vy = 0;
@@ -1241,7 +1434,8 @@ export class Arcade {
   // ---------- Dibujo ----------
   private render() {
     const c = this.canvas;
-    const dpr = window.devicePixelRatio || 1;
+    // En celulares con pantalla 3x el canvas pesa 9 veces más: con 2x alcanza.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const cw = c.clientWidth, ch = c.clientHeight;
     if (c.width !== Math.round(cw * dpr) || c.height !== Math.round(ch * dpr)) {
       c.width = Math.round(cw * dpr);
@@ -1253,7 +1447,8 @@ export class Arcade {
     const viewW = cw / scale, viewH = ch / scale;
     const cx = clamp(this.cam.x, viewW / 2 - 120, Math.max(viewW / 2 - 120, W + 170 - viewW / 2));
     const cy = clamp(this.cam.y, viewH / 2 - 170, H + 40 - viewH / 2);
-    const sx = (rand() - 0.5) * this.shake, sy = (rand() - 0.5) * this.shake;
+    const shake = this.paused ? 0 : this.shake;
+    const sx = (rand() - 0.5) * shake, sy = (rand() - 0.5) * shake;
 
     ctx.fillStyle = "#14532d";
     ctx.fillRect(0, 0, cw, ch);
@@ -1296,6 +1491,7 @@ export class Arcade {
     }
     list.sort((a, b2) => a.y - b2.y).forEach((d) => d.draw());
     this.drawGoalFront(ctx);
+    this.drawDrillTarget(ctx);
 
     if (this.charge >= 0) {
       const w = 40;
@@ -1324,6 +1520,7 @@ export class Arcade {
     this.drawWeather(ctx, cw, ch);
     if (this.replay) this.drawReplayOverlay(ctx, cw, ch);
     else this.drawHUD(ctx, cw, ch);
+    if (this.paused) this.drawPaused(ctx, cw, ch);
   }
 
   /** Córner: dónde cae el centro. */
@@ -1350,7 +1547,7 @@ export class Arcade {
     if (!plan.toGoal) return;
     const charging = this.charge >= 0;
     const chip = charging && this.charge < 0.14 && !this.setPiece;
-    const curve = this.keys.has("shift") || this.touchSprint;
+    const curve = this.altHeld();
     const col = this.charge > 0.9 ? "#ef4444" : chip ? "#fde68a" : "#fde047";
     const ty = plan.ty;
     const tz = chip ? 30 : 16;
@@ -1383,12 +1580,30 @@ export class Arcade {
     ctx.fillStyle = "#1e293b";
     ctx.fillRect(-400, -280, W + 800, 270);
     const party = this.result === "gol" || this.result === "asist" || (!!this.replay && this.t >= this.goalT);
-    for (const p of this.crowd) {
-      const jump = party ? Math.abs(Math.sin(this.t * 9 + p.p)) * 6 : Math.abs(Math.sin(this.t * 2 + p.p)) * 1.2;
-      ctx.fillStyle = p.c;
+    // Un solo trazo por color en vez de 300 fill() sueltos.
+    for (const [color, group] of this.crowdByColor) {
+      ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(p.x, p.y - jump, 5, 0, Math.PI * 2);
+      for (const p of group) {
+        const jump = party ? Math.abs(Math.sin(this.t * 9 + p.p)) * 6 : Math.abs(Math.sin(this.t * 2 + p.p)) * 1.2;
+        ctx.moveTo(p.x + 5, p.y - jump);
+        ctx.arc(p.x, p.y - jump, 5, 0, Math.PI * 2);
+      }
       ctx.fill();
+    }
+    if (this.s.banners?.length) {
+      ctx.textAlign = "center";
+      ctx.font = "900 italic 15px system-ui, sans-serif";
+      this.s.banners.forEach((bn, i) => {
+        const x = 90 + i * 300, y = -128 + Math.sin(this.t * 2 + i) * 2;
+        ctx.fillStyle = bn.c1;
+        ctx.fillRect(x - 70, y - 16, 140, 32);
+        ctx.fillStyle = bn.c2;
+        ctx.fillRect(x - 70, y - 16, 140, 5);
+        ctx.fillRect(x - 70, y + 11, 140, 5);
+        ctx.fillStyle = bn.c2;
+        ctx.fillText(bn.text, x, y + 5, 130);
+      });
     }
     for (let i = 0; i < 6; i++) {
       const x = -60 + i * 210;
@@ -1503,8 +1718,8 @@ export class Arcade {
       ctx.lineWidth = 1.2;
       ctx.beginPath();
       for (const d of this.rain) {
-        d.y += 0.025 * d.s;
-        d.x -= 0.004 * d.s;
+        d.y += 1.5 * d.s * this.rawDt;
+        d.x -= 0.24 * d.s * this.rawDt;
         if (d.y > 1) { d.y -= 1; d.x = rand(); }
         if (d.x < 0) d.x += 1;
         const x = d.x * cw, y = d.y * ch;
@@ -1536,7 +1751,49 @@ export class Arcade {
     ctx.fillText("Espacio / PATEAR para saltar", cw - 16, ch - bar / 2 + 4);
   }
 
+  /** Ayuda contextual para las primeras jugadas. */
+  private hint(): string | null {
+    if (!this.s.tutorial || this.intro > 0 || this.result || this.replay) return null;
+    const t = !!this.s.touch;
+    const K = { mover: t ? "el joystick" : "WASD", patear: t ? "PATEAR" : "ESPACIO", pase: t ? "PASE" : "E", amague: t ? "AMAGUE" : "Q", correr: t ? "CORRER" : "Shift" };
+    const b = this.ball;
+    if (this.setPiece) return this.charge >= 0 ? "Soltá en el verde: si se pone rojo, se va por arriba" : `Apuntá con ${K.mover} y mantené ${K.patear} para cargar el remate`;
+    const slider = this.ents.find((d) => d.role === "def" && d.tk === "wind" && len(d.x - this.me.x, d.y - this.me.y) < 110);
+    if (slider && b.owner === this.me) return `¡Te van a barrer! Apretá ${K.amague} para saltar`;
+    if (b.owner === this.me) {
+      if (this.ownSince < 0) this.ownSince = this.t;
+      if (this.charge >= 0) return "Soltá para patear · más carga = más fuerte (rojo = muy alto)";
+      return this.t - this.ownSince < 3 ? `Mantené ${K.patear} para cargar el remate · ${K.pase} para pasarla` : `${K.amague} para amagar · ${K.correr} para correr${t ? "" : " · Shift + Espacio = comba"}`;
+    }
+    this.ownSince = -1;
+    if (b.owner === this.mate) return `${K.pase} para pedirla de vuelta (pared) · ${K.patear} para que patee él`;
+    if (b.owner && (b.owner.role === "def" || b.owner.role === "att")) return `La tiene el rival: ${K.patear} para barrer · ${K.pase} para meter la pierna`;
+    return `Movete con ${K.mover} hacia la pelota`;
+  }
+
+  private drawHint(ctx: CanvasRenderingContext2D, cw: number, ch: number) {
+    const h = this.hint();
+    if (!h) return;
+    ctx.font = "800 13px system-ui, sans-serif";
+    const w = Math.min(cw - 24, ctx.measureText(h).width + 28);
+    const y = this.s.touch ? ch * 0.2 : ch - 70;
+    ctx.fillStyle = "rgba(15,23,42,.82)";
+    ctx.beginPath(); ctx.roundRect((cw - w) / 2, y - 16, w, 28, 14); ctx.fill();
+    ctx.strokeStyle = "rgba(253,224,71,.7)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = "#fde68a";
+    ctx.textAlign = "center";
+    ctx.fillText(`💡 ${h}`, cw / 2, y + 3, cw - 40);
+  }
+
+  private drawPaused(ctx: CanvasRenderingContext2D, cw: number, ch: number) {
+    ctx.fillStyle = "rgba(2,6,23,.6)";
+    ctx.fillRect(0, 0, cw, ch);
+  }
+
   private drawHUD(ctx: CanvasRenderingContext2D, cw: number, ch: number) {
+    this.drawHint(ctx, cw, ch);
     const frac = clamp(this.timeLeft / this.totalTime, 0, 1);
     const bw = Math.min(260, cw * 0.5);
     const bx = (cw - bw) / 2;
@@ -1545,7 +1802,7 @@ export class Arcade {
     ctx.fillStyle = "#fff";
     ctx.font = "900 15px system-ui, sans-serif";
     ctx.textAlign = "left";
-    ctx.fillText(this.practice ? `⚽ ${this.pGoals}/${this.pShots}` : `${this.s.minute}'`, bx - 60, 31);
+    ctx.fillText(this.s.drill ? `🎯 ${this.drillScore}` : this.practice ? `⚽ ${this.pGoals}/${this.pShots}` : `${this.s.minute}'`, bx - 60, 31);
     ctx.fillStyle = "rgba(255,255,255,.2)";
     ctx.beginPath(); ctx.roundRect(bx, 20, bw, 10, 5); ctx.fill();
     ctx.fillStyle = frac < 0.3 ? "#ef4444" : "#fde047";

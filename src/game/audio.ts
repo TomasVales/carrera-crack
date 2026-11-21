@@ -76,6 +76,96 @@ function burst(dur: number, filterFreq: number, peak: number, q = 1, type: Biqua
   src.start(t);
 }
 
+// ---------- Hinchada que alienta ----------
+// Cánticos lejanos: muchas voces suaves, filtradas y con eco de estadio, sobre un murmullo de tribuna.
+// Melodías originales y simples, en corcheas. n = semitonos sobre la nota base, d = duración, v = vocal ("-" = silencio).
+type Syl = { n: number; d: number; v: "o" | "a" | "e" | "u" | "-" };
+const S = (n: number, d: number, v: Syl["v"]): Syl => ({ n, d, v });
+const PHRASES: Syl[][] = [
+  // "Va-mos, va-mos, que es-ta no-che..."
+  [S(0, 2, "a"), S(0, 1, "o"), S(3, 1, "o"), S(5, 2, "a"), S(3, 2, "o"), S(0, 1, "e"), S(0, 1, "e"), S(-2, 2, "a"), S(0, 4, "o")],
+  // "O-o-o-o, o-o-o..."
+  [S(5, 2, "o"), S(7, 2, "o"), S(5, 1, "o"), S(3, 1, "o"), S(0, 2, "o"), S(0, 2, "-"), S(3, 2, "e"), S(5, 2, "o")],
+  // "Da-le, da-le, da-le..."
+  [S(0, 1, "a"), S(0, 1, "e"), S(0, 1, "a"), S(0, 1, "e"), S(3, 1, "a"), S(3, 1, "e"), S(5, 2, "a"), S(7, 1, "e"), S(5, 1, "o"), S(3, 2, "o"), S(0, 4, "o")],
+  // "Siem-pre te va-mos a se-guir"
+  [S(-2, 2, "e"), S(0, 2, "e"), S(3, 1, "a"), S(3, 1, "o"), S(5, 2, "a"), S(3, 1, "e"), S(0, 1, "e"), S(3, 2, "u"), S(0, 4, "o")],
+];
+const VOWELS: Record<Exclude<Syl["v"], "-">, [number, number]> = { a: [750, 1150], o: [480, 850], e: [420, 1800], u: [340, 680] };
+
+let chant: { timer: number; bus: GainNode; level: GainNode; out: GainNode; murmur: AudioBufferSourceNode; lfo: OscillatorNode; next: number; phrase: number; left: number; reps: number; mood: number; base: number } | null = null;
+
+/** Eco de estadio: ruido que se apaga de a poco, en estéreo. */
+function stadiumReverb(a: AudioContext, seconds = 2.6) {
+  const len = Math.floor(a.sampleRate * seconds);
+  const buf = a.createBuffer(2, len, a.sampleRate);
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6);
+  }
+  const conv = a.createConvolver();
+  conv.buffer = buf;
+  return conv;
+}
+
+/** Una sílaba cantada por la tribuna: voces desafinadas que entran a destiempo, pasando por los formantes de la vocal. */
+function voces(t: number, freq: number, dur: number, v: Exclude<Syl["v"], "-">) {
+  const a = ctx();
+  const g = a.createGain();
+  const peak = 0.03;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(peak, t + 0.1);
+  g.gain.setValueAtTime(peak, t + Math.max(0.11, dur - 0.05));
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur + 0.18);
+  const [f1, f2] = VOWELS[v];
+  for (const [fq, q, k] of [[f1, 4, 1], [f2, 6, 0.45]] as const) {
+    const bp = a.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = fq;
+    bp.Q.value = q;
+    const kg = a.createGain();
+    kg.gain.value = k;
+    bp.connect(kg).connect(g);
+    for (let i = 0; i < 5; i++) {
+      const o = a.createOscillator();
+      o.type = "sawtooth";
+      const oct = i === 4 ? 2 : 1; // algunos cantan una octava arriba
+      o.frequency.value = freq * oct * Math.pow(2, ((Math.random() - 0.5) * 0.5) / 12);
+      const st = t + Math.random() * 0.08; // la tribuna nunca entra toda junta
+      o.connect(bp);
+      o.start(st);
+      o.stop(t + dur + 0.25);
+    }
+  }
+  g.connect(chant!.bus);
+}
+
+function scheduleChant() {
+  if (!chant) return;
+  const a = ctx();
+  const eighth = 60 / 104 / 2;
+  if (chant.next < a.currentTime) chant.next = a.currentTime + 0.05; // volvió de segundo plano
+  while (chant.next < a.currentTime + 0.4) {
+    const t = chant.next;
+    if (chant.left <= 0) {
+      let pos = 0;
+      for (const syl of PHRASES[chant.phrase]) {
+        if (syl.v !== "-") voces(t + pos * eighth, chant.base * Math.pow(2, syl.n / 12), syl.d * eighth, syl.v);
+        pos += syl.d;
+      }
+      chant.left = Math.ceil(pos / 8) * 8;
+      chant.reps--;
+      if (chant.reps <= 0) {
+        chant.phrase = (chant.phrase + 1 + Math.floor(Math.random() * (PHRASES.length - 1))) % PHRASES.length;
+        chant.reps = 2 + Math.floor(Math.random() * 2);
+        chant.left += 16 + Math.floor(Math.random() * 3) * 8; // un rato de murmullo entre canción y canción
+      }
+    }
+    chant.left--;
+    chant.next += eighth;
+  }
+}
+
 export const sfx = {
   kick(power = 0.6) {
     tone(150, 0.12, "sine", 0.5 * (0.5 + power), 50);
@@ -120,6 +210,12 @@ export const sfx = {
     burst(1.8, 1400, 0.25, 0.6, "bandpass", 0.1);
     [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.22, "square", 0.07, undefined, i * 0.09));
   },
+  /** Silbidos y abucheos de la tribuna. */
+  boo() {
+    burst(2.6, 260, 0.35, 0.7, "lowpass");
+    burst(2.2, 2600, 0.06, 6, "bandpass", 0.2);
+    [2400, 2750, 2100].forEach((f, i) => tone(f, 0.5, "sine", 0.04, f * 0.92, 0.3 + i * 0.35));
+  },
   ooh() {
     burst(1, 500, 0.3, 0.5);
   },
@@ -151,5 +247,73 @@ export const sfx = {
     if (!crowd) return;
     crowd.src.stop();
     crowd = null;
+  },
+  /** Arranca la hinchada que alienta. mood: 1 normal, más alto en clásicos y finales. */
+  chantStart(mood = 1) {
+    const a = ctx();
+    if (chant) {
+      chant.mood = mood;
+      chant.out.gain.setTargetAtTime(0.9 * mood, a.currentTime, 0.5);
+      return;
+    }
+    // voces → filtro (suena lejos) → nivel → poco directo + mucho eco → salida
+    const bus = a.createGain();
+    const lp = a.createBiquadFilter();
+    lp.type = "lowpass";
+    lp.frequency.value = 1500;
+    const level = a.createGain();
+    level.gain.value = 1;
+    const out = a.createGain();
+    out.gain.setValueAtTime(0.0001, a.currentTime);
+    out.gain.linearRampToValueAtTime(0.9 * mood, a.currentTime + 2);
+    const dry = a.createGain();
+    dry.gain.value = 0.35;
+    const wet = a.createGain();
+    wet.gain.value = 0.9;
+    const rev = stadiumReverb(a);
+    bus.connect(lp).connect(level);
+    level.connect(dry).connect(out);
+    level.connect(rev).connect(wet).connect(out);
+    out.connect(master!);
+    // murmullo de tribuna que sube y baja solo
+    const murmur = a.createBufferSource();
+    murmur.buffer = noiseBuffer(4);
+    murmur.loop = true;
+    const mf = a.createBiquadFilter();
+    mf.type = "bandpass";
+    mf.frequency.value = 650;
+    mf.Q.value = 0.7;
+    const mg = a.createGain();
+    mg.gain.value = 0.05;
+    const lfo = a.createOscillator();
+    lfo.frequency.value = 0.12;
+    const lg = a.createGain();
+    lg.gain.value = 0.025;
+    lfo.connect(lg).connect(mg.gain);
+    murmur.connect(mf).connect(mg).connect(level);
+    murmur.start();
+    lfo.start();
+    chant = { timer: 0, bus, level, out, murmur, lfo, next: a.currentTime + 0.5, phrase: Math.floor(Math.random() * PHRASES.length), left: 8, reps: 2, mood, base: 185 + Math.random() * 25 };
+    chant.timer = window.setInterval(scheduleChant, 100);
+    scheduleChant();
+  },
+  /** La tribuna se viene abajo un rato (gol, jugada clave). */
+  chantBoost(seconds = 6) {
+    if (!chant) return;
+    const t = ctx().currentTime;
+    chant.level.gain.cancelScheduledValues(t);
+    chant.level.gain.setTargetAtTime(2, t, 0.15);
+    chant.level.gain.setTargetAtTime(1, t + seconds, 1.5);
+  },
+  chantStop() {
+    if (!chant) return;
+    const c = chant;
+    chant = null;
+    clearInterval(c.timer);
+    const a = ctx();
+    c.out.gain.cancelScheduledValues(a.currentTime);
+    c.out.gain.setValueAtTime(c.out.gain.value, a.currentTime);
+    c.out.gain.linearRampToValueAtTime(0, a.currentTime + 0.8);
+    setTimeout(() => { c.murmur.stop(); c.lfo.stop(); c.out.disconnect(); }, 1000);
   },
 };

@@ -1,7 +1,7 @@
 // Motor del modo carrera (v3): 12 ligas reales en paralelo, copas nacionales, copas continentales,
 // torneos de selecciones, titularidad, eventos, mercado, tienda y premios con gala.
 import {
-  CLUBS, LEAGUES, NATIONS, SHOP, STAT_INFO, STAT_KEYS, UGLY_BOOTS, clamp, club, clubsOf, league, overall, pick, poisson, rand, randInt, shuffle,
+  BASE_STRENGTH, CLUBS, LEAGUES, NATIONS, applyPower, derbyName, randomName, seeded, SHOP, STAT_INFO, STAT_KEYS, UGLY_BOOTS, clamp, club, clubsOf, league, overall, pick, poisson, rand, randInt, shuffle,
   type Confed, type Foot, type Look, type Pos, type StatKey, type Stats, type Team,
 } from "./data";
 
@@ -43,10 +43,11 @@ export type LeagueState = { fixtures: Fixture[][]; table: Record<string, Row>; s
 export type CupKey = "copa" | "cont" | "nac";
 export type Cup = { key: CupKey; name: string; icon: string; stages: Fixture[][]; total: number; alive: boolean; champion: string | null };
 export type Slot = { kind: "liga"; round: number } | { kind: "cup"; cup: CupKey; stage: number };
-export type Offer = { clubId: string; salary: number; years: number; role: Role; max: number; patience: number; status: "abierta" | "acuerdo" | "rota" };
+export type Offer = { clubId: string; salary: number; years: number; role: Role; max: number; patience: number; status: "abierta" | "acuerdo" | "rota"; loan?: boolean };
 export type NewsTag = "partido" | "liga" | "mundo" | "mercado" | "rumor" | "seleccion" | "hito" | "vida";
 export type News = { season: number; n: number; text: string; tag: NewsTag; team?: string; big?: boolean };
-export type SeasonLog = { season: number; age: number; clubId: string; pj: number; goals: number; assists: number; avg: number; place: number; awards: string[] };
+export type SeasonLog = { season: number; age: number; clubId: string; pj: number; goals: number; assists: number; avg: number; place: number; awards: string[]; str?: number };
+export type ClubChange = { id: string; before: number; after: number; signings: string[]; sales: string[] };
 
 export type Career = {
   v: 3;
@@ -79,9 +80,53 @@ export type Career = {
   milestones: string[];
   counter: number;
   worldChampions: Record<string, string>; // ganadores de copas continentales donde no jugaste
+  agent?: string; // id del representante (partidas viejas: el tío)
+  agentFee?: number; // comisión actual (puede subir por eventos)
+  loan?: { parentId: string; contract: Contract; until: number } | null; // a préstamo: vuelve al terminar la temporada `until`
+  nemesis?: Nemesis;
+  bond?: Record<string, { seasons: number; goals: number; pj: number }>; // historia con cada club
+  idols?: string[]; // clubes donde sos ídolo
+  traitor?: string[]; // clubes que te consideran traidor
+  counters?: Record<string, number>; // contadores de por vida (logros y desafíos)
+  achievements?: string[];
+  challenges?: Challenge[];
+  drillSlot?: number; // semana en la que ya hiciste el entrenamiento especial
+  power?: Record<string, number>; // fuerza actual de cada club (cambia con los resultados)
+  signings?: Record<string, Signing[]>; // refuerzos que llegaron a cada club
+  sold?: Record<string, string[]>; // jugadores que cada club vendió (salen del plantel)
 };
+export type Signing = { name: string; pos: SquadPos; ovr: number; age: number; from: string; season: number };
 
-export type MatchOutcome = { played: boolean; hg: number; ag: number; goals: number; assists: number; rating: number | null; pensWin?: boolean };
+export type Nemesis = { name: string; clubId: string; nation: string; ovr: number; goals: number; seasonGoals: number; ballonDor: number; look: Look; num: number; w: number; d: number; l: number };
+export type Challenge = { id: string; text: string; key: string; target: number; start: number; done: boolean };
+export type Pep = "concentrar" | "arengar" | "provocar";
+
+// ---------- Representantes ----------
+export type Agent = { id: string; emoji: string; name: string; fee: number; skill: number; fame: number; desc: string };
+export const AGENTS: Agent[] = [
+  { id: "tio", emoji: "👨‍🦳", name: "Tu tío Rubén", fee: 0.02, skill: 0, fame: 0, desc: "Te quiere como a un hijo. De contratos sabe poco." },
+  { id: "gino", emoji: "🕴️", name: "Gino Contratti", fee: 0.07, skill: 1, fame: 15, desc: "Conoce a medio mundo. Consigue algo más de sueldo." },
+  { id: "billetera", emoji: "💼", name: "Mister Billetera", fee: 0.12, skill: 2, fame: 35, desc: "Te trae más ofertas y negocia fuerte." },
+  { id: "volpe", emoji: "🦊", name: "Superagente Volpe", fee: 0.18, skill: 3, fame: 60, desc: "Mueve a los cracks del planeta. Caro, pero los clubes grandes lo atienden." },
+];
+export const agentOf = (c: Career) => AGENTS.find((a) => a.id === (c.agent ?? "tio")) ?? AGENTS[0];
+export const agentFee = (c: Career) => c.agentFee ?? agentOf(c).fee;
+/** Cambiar de representante: rescindir con el actual cuesta un mes de sueldo. */
+export const agentSwitchCost = (c: Career) => ((c.agent ?? "tio") === "tio" ? 0 : Math.max(5, c.contract.salary * 4));
+export function hireAgent(c: Career, id: string): string {
+  const a = AGENTS.find((x) => x.id === id);
+  if (!a || a.id === (c.agent ?? "tio")) return "";
+  if (c.player.fame < a.fame) return `${a.name} no atiende a jugadores con menos de ${a.fame} de fama.`;
+  const cost = agentSwitchCost(c);
+  if (c.player.money < cost) return `Rescindir con tu representante actual cuesta €${cost}k.`;
+  c.player.money -= cost;
+  c.agent = a.id;
+  c.agentFee = a.fee;
+  addNews(c, "mercado", `${myName(c)} cambia de representante: ahora lo maneja ${a.name}.`, c.clubId);
+  return `${a.emoji} ${a.name} es tu nuevo representante${cost ? ` (pagaste €${cost}k de rescisión)` : ""}.`;
+}
+
+export type MatchOutcome = { played: boolean; hg: number; ag: number; goals: number; assists: number; rating: number | null; pensWin?: boolean; kinds?: string[]; moves?: string[]; pep?: Pep };
 
 export type Report = MatchOutcome & {
   home: string;
@@ -114,7 +159,7 @@ export function loadSlot(n: number): Career | null {
   try {
     const s = localStorage.getItem(slotKey(n));
     const c = s ? (JSON.parse(s) as Career) : null;
-    return c && c.v === 3 ? c : null;
+    return c && c.v === 3 ? upgrade(c) : null;
   } catch {
     return null;
   }
@@ -131,6 +176,7 @@ export function importCareer(text: string, slot: number): Career {
   const c = JSON.parse(text) as Career;
   if (!c || c.v !== 3 || !c.player) throw new Error("Ese archivo no es una partida de esta versión de Carrera de Crack.");
   c.slotId = slot;
+  upgrade(c);
   save(c);
   return c;
 }
@@ -203,6 +249,21 @@ const CONTINENTAL: { name: string; icon: string; quotas: Record<string, [number,
   { name: "Concacaf Champions Cup", icon: "🌎", quotas: { mex: [0, 4], usa: [0, 4] } },
 ];
 
+const ZONE_COLORS: Record<string, string> = { "Champions League": "#3b82f6", "Europa League": "#f97316", "Copa Libertadores": "#eab308", "Concacaf Champions Cup": "#10b981" };
+export type Zone = { name: string; icon: string; color: string };
+/** A qué copa internacional clasifica el puesto `pos` (0 = primero) de una liga. */
+export function tableZone(leagueId: string, pos: number): Zone | null {
+  for (const comp of CONTINENTAL) {
+    const q = comp.quotas[leagueId];
+    if (q && pos >= q[0] && pos < q[1]) return { name: comp.name, icon: comp.icon, color: ZONE_COLORS[comp.name] };
+  }
+  return null;
+}
+/** Las zonas de una liga, en orden, para la leyenda de la tabla. */
+export function leagueZones(leagueId: string): (Zone & { from: number; to: number })[] {
+  return CONTINENTAL.filter((comp) => comp.quotas[leagueId]).map((comp) => ({ name: comp.name, icon: comp.icon, color: ZONE_COLORS[comp.name], from: comp.quotas[leagueId][0] + 1, to: comp.quotas[leagueId][1] }));
+}
+
 function continentalTeams(c: Career, comp: (typeof CONTINENTAL)[number]) {
   return Object.entries(comp.quotas).flatMap(([lg, [a, b]]) => (c.lastStandings[lg] ?? []).slice(a, b));
 }
@@ -241,6 +302,7 @@ function setupSeasonCups(c: Career) {
 }
 
 export function newCareer(p: Pick<Player, "name" | "nick" | "number" | "pos" | "foot" | "nation" | "look" | "stats">, clubId: string, slotId: number): Career {
+  applyPower(undefined); // carrera nueva: todos los clubes con su fuerza de fábrica
   const c: Career = {
     v: 3,
     slotId,
@@ -280,6 +342,7 @@ export function newCareer(p: Pick<Player, "name" | "nick" | "number" | "pos" | "
   c.schedule = buildSchedule(c);
   c.seasonLen = c.schedule.length;
   addNews(c, "hito", `${p.nick || p.name} firma su primer contrato profesional con ${club(clubId).name}: "Vengo a hacer historia".`, clubId, true);
+  upgrade(c);
   return c;
 }
 
@@ -344,7 +407,7 @@ export function topScorers(c: Career, leagueId = myLeague(c)) {
 
 // ---------- Partido actual ----------
 
-export type MatchInfo = { slot: Slot; fixture: Fixture; home: Team; away: Team; myId: string; rival: Team; isHome: boolean; label: string; knockout: boolean; big: boolean; cup: Cup | null };
+export type MatchInfo = { slot: Slot; fixture: Fixture; home: Team; away: Team; myId: string; rival: Team; isHome: boolean; label: string; knockout: boolean; big: boolean; cup: Cup | null; derby: string | null; nemesis: boolean };
 
 export function matchInfo(c: Career): MatchInfo | null {
   const s = c.schedule[c.slot];
@@ -365,8 +428,10 @@ export function matchInfo(c: Career): MatchInfo | null {
   if (!fx) return null;
   const isHome = fx.home === myId;
   const rival = club(isHome ? fx.away : fx.home);
-  const big = s.kind === "cup" || (rival.strength >= 82 && club(myId).strength >= 75);
-  return { slot: s, fixture: fx, home: club(fx.home), away: club(fx.away), myId, rival, isHome, label, knockout: s.kind === "cup", big, cup };
+  const derby = derbyName(myId, rival.id);
+  const nemesis = !!c.nemesis && (rival.id === c.nemesis.clubId || rival.id === c.nemesis.nation);
+  const big = s.kind === "cup" || !!derby || nemesis || (rival.strength >= 82 && club(myId).strength >= 75);
+  return { slot: s, fixture: fx, home: club(fx.home), away: club(fx.away), myId, rival, isHome, label, knockout: s.kind === "cup", big, cup, derby, nemesis };
 }
 
 export function matchRole(c: Career): { role: Role; why: string } {
@@ -561,6 +626,8 @@ export function finishMatch(c: Career, o: MatchOutcome): Report {
   m.fixture.ag = o.ag;
   const hl = headline(c, o, m, role);
   const k = perMatch(c);
+  upgrade(c);
+  const levelBefore = p.level;
 
   if (s.kind === "liga") {
     playLeagueRound(c, s.round, m.fixture, o.goals);
@@ -611,6 +678,18 @@ export function finishMatch(c: Career, o: MatchOutcome): Report {
     p.coach = clamp(p.coach + (o.rating - 6) * 2.2 + (58 - p.coach) * 0.04, 0, 100);
     if (p.fire > 0) p.fire--;
     if (o.goals && !isNat) money += o.goals * Math.max(1, Math.round(c.contract.salary * 0.3));
+    afterPlayed(c, o, m, role, mine, theirs, isNat, notes);
+    if (m.derby) {
+      if (mine > theirs) {
+        p.fame = clamp(p.fame + 3 + o.goals * 2, 0, 100);
+        p.morale = clamp(p.morale + 6, 0, 100);
+        notes.push(`🔥 ¡Ganaste el ${m.derby}! La hinchada te lleva en andas (+fama)`);
+        addNews(c, "partido", `${club(m.myId).name} se queda con el ${m.derby}${o.goals ? ` con ${o.goals > 1 ? `${o.goals} goles` : "gol"} de ${myName(c)}` : ""}. Fiesta en las calles.`, m.myId, true);
+      } else if (mine < theirs) {
+        p.morale = clamp(p.morale - 6, Math.max(5, moraleFloor(c)), 100);
+        notes.push(`😞 Perdiste el ${m.derby}. Una semana sin salir a la calle (−moral)`);
+      } else notes.push(`🤝 Empate en el ${m.derby}. Nadie se burla de nadie esta semana`);
+    }
     if (c.flags.promesa) {
       delete c.flags.promesa;
       if (o.goals > 0) { p.fame = clamp(p.fame + 10, 0, 100); notes.push("¡Cumpliste la promesa de gol! +10 fama"); addNews(c, "vida", `${myName(c)} prometió un gol y cumplió. La hinchada lo adora.`, c.clubId); }
@@ -642,6 +721,7 @@ export function finishMatch(c: Career, o: MatchOutcome): Report {
       trainUp = p.focus;
     }
   }
+  if (money > 0 && !isNat) money -= Math.round(money * agentFee(c));
   p.money += money;
   p.xp += xp;
   while (p.xp >= xpNeeded(p.level)) {
@@ -650,6 +730,12 @@ export function finishMatch(c: Career, o: MatchOutcome): Report {
     p.points += 4;
     levelUps++;
   }
+
+  for (const mv of MOVES) if (mv.level > levelBefore && mv.level <= p.level) {
+    notes.push(`${mv.emoji} ¡Nueva jugada desbloqueada: ${mv.name}! ${mv.how}`);
+    addNews(c, "hito", `${myName(c)} sorprende en el entrenamiento: ahora tira ${mv.name.toLowerCase()}s.`, c.clubId);
+  }
+  if (o.rating !== null) checkAchievements(c, notes);
 
   const hito = (id: string, text: string) => {
     if (c.milestones.includes(id)) return;
@@ -671,7 +757,7 @@ export function finishMatch(c: Career, o: MatchOutcome): Report {
   const outlet = pick(OUTLETS);
   addNews(c, isNat ? "seleccion" : "partido", `${hl} (${club(m.fixture.home).short} ${o.hg}-${o.ag} ${club(m.fixture.away).short})`, m.myId);
   if (rand() < 0.15 * k * 1.5 && avgRating(c) >= 6.9) {
-    const big = pick(CLUBS.filter((x) => x.strength >= 84 && x.id !== c.clubId));
+    const big = pick(topClubs(12).filter((x) => x.id !== c.clubId)); // los más fuertes del momento
     addNews(c, "rumor", pick([`Rumor: ${big.name} manda a sus ojeadores a ver a ${myName(c)}.`, `Dicen que ${big.name} prepara una oferta por ${myName(c)}.`, `El presidente de ${big.name}: "¿${myName(c)}? Nos encanta".`]), big.id);
   }
 
@@ -912,11 +998,31 @@ export const EVENTS: Record<string, GameEvent> = {
     ],
   },
   clasico: {
-    id: "clasico", emoji: "📣", title: "Semana de clásico", weight: () => 0.6,
-    text: () => "La hinchada te para en la calle: \"¡Prometé un gol para el próximo partido!\"",
+    id: "clasico", emoji: "📣", title: "Semana de clásico", weight: (c) => (matchInfo(c)?.derby ? 2.5 : 0.15),
+    text: (c) => {
+      const d = matchInfo(c)?.derby;
+      return d ? `Se viene el ${d}. La hinchada te para en la calle: "¡Prometé un gol en el clásico!"` : "La hinchada te para en la calle: \"¡Prometé un gol para el próximo partido!\"";
+    },
     options: [
       { label: "\"¡Les prometo un gol!\"", hint: "Si convertís: +10 fama. Si no: −6", apply: (c) => { c.flags.promesa = 1; return "Los hinchas cantan tu nombre. Ahora hay que cumplir..."; } },
       { label: "\"Vamos a dejar todo\"", hint: "Sin riesgo", apply: (c) => { add(c, "morale", 2); return "Respuesta de capitán."; } },
+    ],
+  },
+  nemesis: {
+    id: "nemesis", emoji: "⚔️", title: "Tu némesis habla", weight: (c) => (c.nemesis ? 0.4 : 0),
+    text: (c) => `${c.nemesis!.name} en una entrevista: "¿${myName(c)}? Buen jugador... de PlayStation". El video ya tiene millones de vistas.`,
+    options: [
+      { label: "Responder en la cancha", hint: "Si hacés un gol el próximo partido: +6 fama. Si no: −3", apply: (c) => { c.flags.nemesisPromesa = 1; return "\"Hablo los domingos\". Ahora hay que cumplir."; } },
+      { label: "Contestarle en redes", hint: "+ fama · al DT no le gusta", apply: (c) => { add(c, "fame", 4); add(c, "coach", -4); return "Tu respuesta tiene más likes que su video. El DT te pide que te calles."; } },
+      { label: "Ignorarlo", hint: "+ moral", apply: (c) => { add(c, "morale", 3); return "Ni lo nombrás. Tu silencio dice todo."; } },
+    ],
+  },
+  comision: {
+    id: "comision", emoji: "💼", title: "Tu representante pide más comisión", weight: (c) => ((c.agent ?? "tio") !== "tio" && agentFee(c) < agentOf(c).fee + 0.06 ? 0.35 : 0),
+    text: (c) => `${agentOf(c).name} te cita en un bar: "Te estoy consiguiendo cosas grandes. Quiero un ${Math.round((agentFee(c) + 0.03) * 100)}% de comisión".`,
+    options: [
+      { label: "Aceptar", hint: "+3% de comisión · + fama", apply: (c) => { c.agentFee = Math.round((agentFee(c) + 0.03) * 100) / 100; add(c, "fame", 3); return "Te sacás una foto juntos. Los diarios hablan de tu próximo gran pase."; } },
+      { label: "Echarlo", hint: "Volvés con tu tío · − moral", apply: (c) => { const n = agentOf(c).name; c.agent = "tio"; c.agentFee = AGENTS[0].fee; add(c, "morale", -4); addNews(c, "mercado", `${myName(c)} rompe con ${n}. Lo vuelve a representar su tío.`, c.clubId); return `${n} se va dando un portazo. Tu tío Rubén ya te está llamando.`; } },
     ],
   },
   apuesta: {
@@ -1072,19 +1178,36 @@ function openWindow(c: Career, kind: "invierno" | "verano") {
   const val = marketValue(c);
   const avg = avgRating(c);
   const o = ovr(c);
+  const ag = agentOf(c);
   let n = avg >= 7.2 ? 3 : avg >= 6.4 ? 2 : 1;
   if (c.player.fame >= 50) n++;
+  if (ag.skill >= 2) n++;
   if (kind === "invierno" && rand() < 0.3) n--;
-  const target = o + 8 + avg * 2 - 12;
+  const target = o + 8 + avg * 2 - 12 + (ag.skill >= 3 ? 4 : 0);
   const candidates = CLUBS.filter((cl) => cl.id !== c.clubId)
     .map((cl) => ({ cl, score: -Math.abs(cl.strength - target) + rand() * 16 }))
     .sort((a, b) => b.score - a.score)
     .slice(0, n);
   c.offers = candidates.map(({ cl }) => {
     const role: Role = cl.strength > o + 14 ? "suplente" : "titular";
-    const salary = Math.min(Math.round(salaryCap(c) * (cl.strength / 78)), Math.max(c.contract.salary + 1, Math.round((val / 380) * (cl.strength / 70))));
-    return { clubId: cl.id, salary, years: randInt(2, 4), role, max: Math.round(salary * (1.15 + rand() * 0.5)), patience: randInt(1, 3), status: "abierta" as const };
+    const boost = 1 + ag.skill * 0.07;
+    const salary = Math.round(Math.min(Math.round(salaryCap(c) * (cl.strength / 78)), Math.max(c.contract.salary + 1, Math.round((val / 380) * (cl.strength / 70)))) * boost);
+    return { clubId: cl.id, salary, years: randInt(2, 4), role, max: Math.round(salary * (1.15 + rand() * 0.5)), patience: randInt(1, 3) + (ag.skill >= 2 ? 1 : 0), status: "abierta" as const };
   });
+  // Si estás jugando poco, aparecen clubes que te quieren a préstamo
+  const benched = (c.flags.banco ?? 0) >= 5 || (c.contract.role === "suplente" && (c.flags.banco ?? 0) >= 2);
+  if (benched && !c.loan) {
+    const parent = c.clubId;
+    const cs = club(parent).strength;
+    const free = CLUBS.filter((cl) => cl.id !== parent && !c.offers!.some((x) => x.clubId === cl.id));
+    // clubes más chicos que el tuyo (si ya estás en uno de los más chicos, alguno parecido)
+    const smaller = free.filter((cl) => cl.strength >= cs - 14 && cl.strength <= cs - 3);
+    const loans = (smaller.length >= 2 ? smaller : free.filter((cl) => cl.strength <= cs + 2))
+      .map((cl) => ({ cl, score: (cl.league === club(parent).league ? 4 : 0) + rand() * 10 - Math.abs(cl.strength - (cs - 8)) * 0.4 }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 2);
+    for (const { cl } of loans) c.offers.push({ clubId: cl.id, salary: c.contract.salary, years: 1, role: "titular", max: c.contract.salary, patience: 0, status: "acuerdo", loan: true });
+  }
   c.windowKind = kind;
   if (!c.offers.length) {
     c.offers = null;
@@ -1122,8 +1245,11 @@ export function negotiate(c: Career, offer: Offer, ask: Ask): NegResult {
 }
 
 export function signFor(c: Career, offer: Offer) {
+  upgrade(c);
   const from = club(c.clubId);
   const to = club(offer.clubId);
+  const loanFrom = offer.loan ? { parentId: c.loan?.parentId ?? c.clubId, contract: c.loan?.contract ?? { ...c.contract }, until: c.windowKind === "invierno" ? c.season : c.season + 1 } : null;
+  const wasLoan = c.loan;
   const changeLeague = from.league !== to.league;
   c.clubId = offer.clubId;
   if (!c.seasonOver) {
@@ -1138,7 +1264,9 @@ export function signFor(c: Career, offer: Offer) {
     c.schedule = [...c.schedule.slice(0, c.slot), ...buildSchedule(c)];
     if (changeLeague) c.seasonStats.leagueGoals = 0;
   }
-  c.contract = { salary: offer.salary, years: offer.years, role: offer.role, clause: Math.round(marketValue(c) * 2.2) };
+  c.contract = loanFrom ? { salary: offer.salary, years: 99, role: "titular", clause: 1e9 } : { salary: offer.salary, years: offer.years, role: offer.role, clause: Math.round(marketValue(c) * 2.2) };
+  c.loan = loanFrom;
+  c.flags.banco = 0;
   c.player.coach = 55;
   c.player.morale = clamp(c.player.morale + 10, 0, 100);
   if (c.flags.tatuaje) {
@@ -1147,7 +1275,18 @@ export function signFor(c: Career, offer: Offer) {
     addNews(c, "vida", `Los hinchas de ${from.name} no perdonan: "¡Te tatuaste nuestro escudo!"`, from.id);
   }
   if (c.rival && rand() < 0.7) c.rival = null;
-  if (offer.clubId === c.firstClubId) addNews(c, "hito", `¡VUELVE A CASA! ${myName(c)} regresa a ${to.name}, el club que lo vio nacer.`, to.id, true);
+  const fromBond = c.bond![from.id];
+  if (!loanFrom && derbyName(from.id, to.id) && fromBond && fromBond.seasons >= 2) {
+    if (!c.traitor!.includes(from.id)) c.traitor!.push(from.id);
+    c.idols = c.idols!.filter((x) => x !== from.id);
+    add(c, "fame", 4);
+    add(c, "morale", -6);
+    addNews(c, "mercado", `¡TRAICIÓN! ${myName(c)} se pasa al eterno rival: de ${from.name} a ${to.name}. En ${from.city} queman camisetas con su número.`, to.id, true);
+  }
+  if (loanFrom) addNews(c, "mercado", `${myName(c)} se va a préstamo a ${to.name} hasta fin de temporada${loanFrom.until > c.season ? " que viene" : ""} para sumar minutos.`, to.id, true);
+  else if (wasLoan && wasLoan.parentId !== to.id) addNews(c, "mercado", `${club(wasLoan.parentId).name} pierde a ${myName(c)}: firma con ${to.name} y no vuelve de su préstamo.`, to.id, true);
+  else if (c.idols!.includes(to.id)) { add(c, "morale", 12); add(c, "fame", 3); addNews(c, "hito", `¡VUELVE EL ÍDOLO! ${myName(c)} regresa a ${to.name}. La hinchada colapsa el aeropuerto.`, to.id, true); }
+  else if (offer.clubId === c.firstClubId) addNews(c, "hito", `¡VUELVE A CASA! ${myName(c)} regresa a ${to.name}, el club que lo vio nacer.`, to.id, true);
   else addNews(c, "mercado", `¡BOMBAZO! ${myName(c)} deja ${from.name} y firma con ${to.name}${changeLeague ? ` (${league(to.league).flag} ${league(to.league).name})` : ""} por ${offer.years} temporadas.`, to.id, true);
   closeWindow(c);
   if (!c.seasonOver) advanceSlots(c);
@@ -1195,6 +1334,9 @@ export type SeasonSummary = {
   retire: boolean;
   renewed: boolean;
   ballonWinner: string;
+  loanBack: string | null;
+  achievements: string[];
+  club?: ClubChange;
 };
 
 function completeLeagues(c: Career) {
@@ -1252,7 +1394,7 @@ export function endSeason(c: Career): SeasonSummary {
   const titleBonus = ss.titles.reduce((a, t) => a + (/Champions|Mundial/.test(t) ? 16 : /Libertadores|Eurocopa|Copa América/.test(t) ? 11 : LEAGUES.some((l) => l.name === t) ? 8 : 3), 0);
   const score = avg * 10 + ss.goals * 0.8 + ss.assists * 0.4 + titleBonus + c.player.fame * 0.1 - (ss.pj < R * 0.6 ? 30 : 0);
   const bar = 126 + rand() * 12;
-  const candidates = CLUBS.filter((x) => x.strength >= 86).map((x) => x.star);
+  const candidates = topClubs(8).map((x) => x.star);
   let ballonWinner = pick(candidates);
   if (score > bar) {
     ballonWinner = me;
@@ -1262,10 +1404,24 @@ export function endSeason(c: Career): SeasonSummary {
     addNews(c, "hito", `¡${me} GANA EL BALÓN DE ORO! Noche mágica en París.`, c.clubId, true);
   } else addNews(c, "mundo", `${ballonWinner} gana el Balón de Oro.${score > bar - 12 ? ` ${me} quedó entre los finalistas.` : ""}`);
 
+  // tu némesis también tiene su temporada (y puede ganarte el Balón de Oro)
+  upgrade(c);
+  const nm = c.nemesis!;
+  if (ballonWinner !== me && nm.ovr >= 84 && rand() < 0.18 + (nm.ovr - 84) * 0.05) {
+    ballonWinner = nm.name;
+    nm.ballonDor++;
+    addNews(c, "mundo", `⚔️ ${nm.name}, tu némesis, gana el Balón de Oro. En la gala dijo: "Me lo dedico a los que dudaban... vos sabés quién sos".`, nm.clubId, true);
+  } else if (ballonWinner === me && nm.ovr >= 82) addNews(c, "mundo", `${nm.name} quedó lejos en el Balón de Oro y no fue a la gala. "Tenía otro compromiso", dicen.`, nm.clubId);
+  const bond = (c.bond![c.clubId] ??= { seasons: 0, goals: 0, pj: 0 });
+  bond.seasons++;
+  checkIdol(c);
+
   c.trophies.push(...awards.map((a) => `${a} · T${c.season}`));
   c.history.push({ season: c.season, age: c.player.age, clubId: c.clubId, pj: ss.pj, goals: ss.goals, assists: ss.assists, avg: Math.round(avg * 10) / 10, place, awards });
   for (const l of LEAGUES) if (l.id !== lg) addNews(c, "mundo", `${l.flag} ${club(champions[l.id]).name} se consagró campeón ${dela(l.name)}.`, champions[l.id]);
   c.lastStandings = Object.fromEntries(LEAGUES.map((l) => [l.id, standings(c, l.id).map((r) => r.id)]));
+  const clubChange = evolveClubs(c, cupWinners, avg);
+  c.history[c.history.length - 1].str = clubChange.after;
 
   const p = c.player;
   p.age++;
@@ -1289,6 +1445,20 @@ export function endSeason(c: Career): SeasonSummary {
     } else c.rival.ovr += randInt(0, 3);
   }
 
+  nemesisSeason(c);
+  let loanBack: string | null = null;
+  if (c.loan && c.loan.until <= c.season) {
+    const lc = club(c.clubId);
+    c.clubId = c.loan.parentId;
+    c.contract = c.loan.contract;
+    c.loan = null;
+    c.player.coach = clamp(c.player.coach + (avg >= 6.8 ? 10 : 0), 0, 100);
+    loanBack = club(c.clubId).name;
+    addNews(c, "mercado", `Termina el préstamo: ${myName(c)} deja ${lc.name} y vuelve a ${loanBack}${avg >= 6.8 ? " con cartel de titular" : ""}.`, c.clubId, true);
+  }
+  const newAch: string[] = [];
+  checkAchievements(c, newAch);
+
   const retireAge = 33 + Math.floor(p.stats.fisico / 30);
   const retire = p.age >= retireAge;
   let renewed = false;
@@ -1301,7 +1471,95 @@ export function endSeason(c: Career): SeasonSummary {
       renewed = true;
     }
   }
-  return { champion, champions, cupWinners, place, awards, gala, growth, retire, renewed, ballonWinner };
+  return { champion, champions, cupWinners, place, awards, gala, growth, retire, renewed, ballonWinner, loanBack, achievements: newAch, club: clubChange };
+}
+
+// ---------- Evolución de los clubes ----------
+/** Los N clubes más fuertes ahora mismo (la fuerza cambia temporada a temporada). */
+const topClubs = (n: number) => [...CLUBS].sort((a, b) => b.strength - a.strength).slice(0, n);
+const POWER_MIN = 48;
+const POWER_MAX = 95;
+const money = (str: number) => Math.max(1, Math.round(((str - 55) / 40) ** 2 * 90 + rand() * 10));
+
+/** Al final de la temporada cada club sube o baja según su puesto, sus copas y (el tuyo) según vos. */
+function evolveClubs(c: Career, cupWinners: { name: string; icon: string; team: string }[], avg: number): ClubChange {
+  const power = (c.power ??= {});
+  const before: Record<string, number> = Object.fromEntries(CLUBS.map((x) => [x.id, x.strength]));
+  const delta: Record<string, number> = {};
+  const add = (id: string, d: number) => { delta[id] = (delta[id] ?? 0) + d; };
+  for (const l of LEAGUES) {
+    const t = standings(c, l.id);
+    const n = t.length;
+    const expected = [...t].sort((a, b) => before[b.id] - before[a.id]).map((r) => r.id);
+    t.forEach((r, i) => {
+      // rendir mejor (o peor) que lo esperado por plantel es lo que hace crecer (o caer)
+      add(r.id, ((expected.indexOf(r.id) - i) / n) * 5);
+      if (i === 0) add(r.id, 1);
+      else if (i >= n - 3) add(r.id, -0.8);
+    });
+  }
+  for (const w of cupWinners) {
+    if (club(w.team).league === "nac") continue;
+    add(w.team, /Champions League|Libertadores/.test(w.name) ? 2 : CONTINENTAL.some((x) => x.name === w.name) ? 1.2 : 0.6);
+  }
+  // vos movés la aguja: si sos la figura, el club crece (y atrae fichajes)
+  const ss = c.seasonStats;
+  if (ss.pj >= 8) add(c.clubId, clamp((avg - 6.6) * 1.2, -1, 1) + Math.min(0.6, ss.goals / 40));
+  for (const x of CLUBS) {
+    const base = BASE_STRENGTH[x.id];
+    const mine = x.id === c.clubId;
+    let d = (delta[x.id] ?? 0) + (rand() - 0.5) * 1.4;
+    d += (base - x.strength) * (mine ? 0.1 : 0.15); // sin dinero infinito: todos tienden a volver a su lugar
+    const over = Math.max(0, x.strength - base);
+    if (d > 0) d /= 1 + over / (mine ? 4 : 3); // cuanto más arriba de su nivel histórico, más cuesta seguir creciendo
+    if (d > 0 && x.strength >= 84) d *= Math.max(0.15, (POWER_MAX - x.strength) / 11); // arriba de todo cuesta mucho más
+    d = clamp(d, mine ? -3 : -2.5, 3);
+    power[x.id] = clamp(Math.round(x.strength + d), POWER_MIN, POWER_MAX);
+  }
+  applyPower(power);
+
+  // noticias: fichajes de los que más crecieron y ventas de los que más cayeron
+  const lgOf = (id: string) => league(club(id).league);
+  const others = CLUBS.filter((x) => x.id !== c.clubId);
+  const risers = others.filter((x) => x.strength - before[x.id] >= 2).sort((a, b) => b.strength - before[b.id] - (a.strength - before[a.id])).slice(0, 3);
+  for (const x of risers) {
+    const from = pick(CLUBS.filter((y) => y.id !== x.id && y.league !== "nac" && Math.abs(y.strength - x.strength) <= 10));
+    const name = randomName(lgOf(x.id).region);
+    addSigning(c, x.id, name, from.id, x.strength + randInt(0, 4));
+    addNews(c, "mercado", `💸 ${x.name} invierte fuerte: llega ${name} desde ${from.name} por €${money(x.strength)}M.`, x.id);
+  }
+  const fallers = others.filter((x) => before[x.id] - x.strength >= 2).slice(0, 2);
+  for (const x of fallers) {
+    const best = squadOf(c, x.id).filter((p) => !p.tag).sort((p, q) => q.ovr - p.ovr)[0];
+    if (best) ((c.sold ??= {})[x.id] ??= []).push(best.name);
+    addNews(c, "mercado", `📉 Crisis en ${x.name}: venden a ${best?.name ?? "su figura"} y el plantel se debilita.`, x.id);
+  }
+
+  // tu club
+  const me = club(c.clubId);
+  const b = before[me.id];
+  const signings: string[] = [];
+  const sales: string[] = [];
+  const reg = lgOf(me.id).region;
+  const diff = me.strength - b;
+  for (let i = 0; i < Math.max(0, diff); i++) {
+    const from = pick(CLUBS.filter((y) => y.id !== me.id && y.strength >= Math.min(me.strength - 8, 85)));
+    const name = randomName(reg);
+    const sg = addSigning(c, me.id, name, from.id, me.strength + randInt(1, 5));
+    signings.push(`${name} · ${sg.pos} ${sg.ovr} (desde ${from.name}, €${money(me.strength)}M)`);
+    addNews(c, "mercado", `✍️ ¡Bombazo! ${me.name} ficha a ${name}, que llega desde ${from.name} para jugar con ${myName(c)}.`, me.id, i === 0);
+  }
+  for (let i = 0; i < Math.max(0, -diff); i++) {
+    const richer = CLUBS.filter((y) => y.id !== me.id && y.strength > me.strength);
+    const to = pick(richer.length ? richer : CLUBS.filter((y) => y.id !== me.id && y.strength >= me.strength - 6));
+    const sellable = squadOf(c, me.id).filter((x) => !x.tag || x.tag === "fichaje").sort((p, q) => q.ovr - p.ovr).slice(0, 8);
+    const name = sellable.length ? pick(sellable).name : randomName(reg);
+    ((c.sold ??= {})[me.id] ??= []).push(name);
+    sales.push(`${name} (a ${to.name})`);
+    addNews(c, "mercado", `👋 ${me.name} vende a ${name} a ${to.name}. El plantel pierde nivel.`, me.id);
+  }
+  if (diff === 0) addNews(c, "mercado", `${me.name} mantiene la base del plantel para la próxima temporada.`, me.id);
+  return { id: me.id, before: b, after: me.strength, signings, sales };
 }
 
 export function startNextSeason(c: Career) {
@@ -1314,6 +1572,7 @@ export function startNextSeason(c: Career) {
   setupSeasonCups(c);
   c.schedule = buildSchedule(c);
   c.seasonLen = c.schedule.length;
+  assignChallenges(c);
   const cont = c.cups.cont;
   addNews(c, "liga", `Arranca la temporada ${c.season}. ${myName(c)} (${c.player.age} años) quiere más.${cont ? ` ¡${club(c.clubId).name} juega la ${cont.name}!` : ""}`, c.clubId, true);
 }
@@ -1338,3 +1597,352 @@ export const startingClubs = (leagueId: string) => [...clubsOf(leagueId)].sort((
 
 /** Para "Simular varios": ¿hay algo que frene la simulación? */
 export const needsStop = (c: Career) => !!(c.pendingEvent || c.offers || c.seasonOver || c.retired || c.player.points > 0);
+
+// =====================================================================
+// v3.1: préstamos, némesis, ídolo/traición, charla previa, jugadas especiales, desafíos y logros
+// =====================================================================
+
+/** Completa los campos nuevos en partidas creadas con versiones anteriores. */
+export function upgrade(c: Career): Career {
+  c.bond ??= {};
+  c.idols ??= [];
+  c.traitor ??= [];
+  c.counters ??= {};
+  const fresh = !c.achievements;
+  c.achievements ??= [];
+  if (fresh) checkAchievements(c, [], false); // partidas viejas: lo que ya lograste, sin premio
+  if (c.loan === undefined) c.loan = null;
+  if (!c.nemesis) c.nemesis = makeNemesis(c);
+  if (!c.challenges) assignChallenges(c);
+  c.power ??= { ...BASE_STRENGTH };
+  return c;
+}
+
+const cnt = (c: Career, k: string) => c.counters?.[k] ?? 0;
+const inc = (c: Career, k: string, v = 1) => { c.counters![k] = cnt(c, k) + v; };
+
+// ---------- Jugadas especiales ----------
+export type MoveId = "cano" | "taco" | "elastica" | "rabona" | "chilena";
+export const MOVES: { id: MoveId; emoji: string; name: string; level: number; how: string; howTouch: string }[] = [
+  { id: "cano", emoji: "🦵", name: "Caño", level: 3, how: "Amague (Q) con un defensor justo enfrente: la pelota le pasa entre las piernas.", howTouch: "AMAGUE con un defensor justo enfrente." },
+  { id: "taco", emoji: "👠", name: "Pase de taco", level: 8, how: "Pase (E) a un compañero que está detrás tuyo.", howTouch: "PASE a un compañero que está detrás tuyo." },
+  { id: "elastica", emoji: "🪢", name: "Elástica", level: 15, how: "Amague (Q) mientras corrés (Shift): engaña mucho más.", howTouch: "AMAGUE mientras mantenés CORRER." },
+  { id: "rabona", emoji: "🎻", name: "Rabona", level: 22, how: "Shift + E: pase o centro de rabona, mucho más preciso.", howTouch: "CORRER + PASE: pase de rabona, más preciso." },
+  { id: "chilena", emoji: "🤸", name: "Chilena", level: 30, how: "Shift + Espacio con la pelota en el aire, cerca tuyo.", howTouch: "CORRER + PATEAR con la pelota en el aire." },
+];
+export const unlockedMoves = (c: Career) => MOVES.filter((m) => c.player.level >= m.level).map((m) => m.id);
+
+// ---------- Némesis ----------
+const NEMESIS_NAMES = ["Dante Vercelli", "Lucas Fenómeno", "Matteo Rayo", "Kylian Brioso", "Santi Cohete", "Viktor Kraft", "Thiago Ventura", "Jonas Blitz", "Renzo Malaspina", "Ezequiel Trueno", "Oliver Strike", "Pietro Saetta"];
+
+function makeNemesis(c: Career): Nemesis {
+  const mine = club(c.clubId);
+  const pool = CLUBS.filter((x) => x.league !== mine.league && Math.abs(x.strength - mine.strength) <= 6);
+  const cl = pool.length ? pick(pool) : pick(CLUBS.filter((x) => x.id !== c.clubId));
+  const nats = NATIONS.filter((n) => n.id !== c.player.nation && n.strength >= 72);
+  const r = (n: number) => Math.floor(rand() * n);
+  return {
+    name: pick(NEMESIS_NAMES), clubId: cl.id, nation: (nats.length ? pick(nats) : pick(NATIONS)).id, ovr: ovr(c) + randInt(0, 3), goals: Math.round(c.totals.goals * (0.8 + rand() * 0.4)), seasonGoals: 0, ballonDor: 0,
+    look: { skin: r(6), hair: r(7), hairColor: r(5), beard: rand() < 0.4 ? 1 + r(3) : 0, eyes: r(2), boots: r(7) }, num: pick([7, 9, 10, 11]), w: 0, d: 0, l: 0,
+  };
+}
+
+function nemesisSeason(c: Career) {
+  const nm = c.nemesis!;
+  nm.seasonGoals = Math.max(0, Math.round((nm.ovr - 55) * 0.75 * (0.6 + rand() * 0.8)));
+  nm.goals += nm.seasonGoals;
+  const mineG = c.history[c.history.length - 1]?.goals ?? 0;
+  addNews(c, "mundo", `⚔️ ${nm.name} cerró la temporada con ${nm.seasonGoals} goles (vos hiciste ${mineG}).${nm.seasonGoals > mineG ? " Ya subió la tabla a sus redes." : " Esta vez no dijo nada."}`, nm.clubId);
+  const age = c.player.age;
+  nm.ovr = clamp(nm.ovr + (age <= 21 ? randInt(2, 5) : age <= 25 ? randInt(1, 3) : age <= 29 ? randInt(-1, 1) : -randInt(1, 3)), 50, 95);
+  if (rand() < 0.3) {
+    const to = CLUBS.filter((x) => x.id !== c.clubId && x.id !== nm.clubId && x.strength >= nm.ovr - 3 && x.strength <= nm.ovr + 5);
+    if (to.length) {
+      const t = pick(to);
+      nm.clubId = t.id;
+      addNews(c, "mercado", `${nm.name} firma con ${t.name}.${t.league === club(c.clubId).league ? " ¡Ahora juega en tu liga!" : ""}`, t.id, t.league === club(c.clubId).league);
+    }
+  }
+}
+
+// ---------- Ídolo ----------
+function checkIdol(c: Career): boolean {
+  const b = c.bond![c.clubId];
+  if (!b || c.idols!.includes(c.clubId) || c.traitor!.includes(c.clubId)) return false;
+  if (b.seasons >= 3 && (b.goals >= 35 || b.pj >= 90)) {
+    c.idols!.push(c.clubId);
+    add(c, "fame", 5);
+    addNews(c, "hito", `🎶 ${myName(c)} ya es ídolo de ${club(c.clubId).name}: la tribuna estrena una bandera gigante con su número ${c.player.number}.`, c.clubId, true);
+    return true;
+  }
+  return false;
+}
+
+/** Qué siente la tribuna por vos en el partido que viene. */
+export function crowdContext(c: Career, m: MatchInfo) {
+  const isNat = m.slot.kind === "cup" && m.slot.cup === "nac";
+  return {
+    idol: !isNat && (c.idols ?? []).includes(m.myId),
+    vsTraitor: !isNat && (c.traitor ?? []).includes(m.rival.id),
+    vsExIdol: !isNat && (c.idols ?? []).includes(m.rival.id),
+  };
+}
+
+// ---------- Después de cada partido jugado ----------
+function afterPlayed(c: Career, o: MatchOutcome, m: MatchInfo, role: Role, mine: number, theirs: number, isNat: boolean, notes: string[]) {
+  const p = c.player;
+  inc(c, "goals", o.goals);
+  inc(c, "assists", o.assists);
+  for (const k of o.kinds ?? []) inc(c, k);
+  for (const k of o.moves ?? []) inc(c, k);
+  if ((o.rating ?? 0) >= 8) inc(c, "nota8");
+  if (o.goals >= 3) inc(c, "hat");
+  if (m.derby && mine > theirs) inc(c, "derbies");
+
+  if (!isNat) {
+    c.flags.banco = role === "suplente" ? (c.flags.banco ?? 0) + 1 : Math.max(0, (c.flags.banco ?? 0) - 1);
+    const b = (c.bond![c.clubId] ??= { seasons: 0, goals: 0, pj: 0 });
+    b.pj++;
+    b.goals += o.goals;
+    if (checkIdol(c)) notes.push(`🎶 ¡Sos ídolo de ${club(c.clubId).name}! La hinchada canta tu nombre`);
+  }
+
+  const cc = crowdContext(c, m);
+  if (cc.vsTraitor) {
+    if (mine > theirs) { add(c, "fame", 2); notes.push("😡 Te silbaron los 90 minutos... y les ganaste igual"); }
+    else notes.push("😡 Tus ex hinchas te silbaron todo el partido");
+  } else if (cc.vsExIdol && m.isHome === false) notes.push("👏 Tus ex hinchas te aplaudieron de pie al salir");
+
+  if (m.nemesis) {
+    const nm = c.nemesis!;
+    if (mine > theirs) { nm.w++; inc(c, "nemesis"); add(c, "fame", 2); notes.push(`⚔️ Le ganaste el duelo a ${nm.name} (${nm.w}-${nm.d}-${nm.l} en la historia)`); }
+    else if (mine < theirs) { nm.l++; notes.push(`⚔️ Ganó ${nm.name}. Se va a burlar en las redes (${nm.w}-${nm.d}-${nm.l})`); }
+    else { nm.d++; notes.push(`⚔️ Empate con ${nm.name} (${nm.w}-${nm.d}-${nm.l})`); }
+    if (rand() < 0.35) addNews(c, "partido", `${nm.name} también marcó en el duelo ante ${myName(c)} y le dedicó el gol con una sonrisa.`, nm.clubId);
+  }
+  if (c.flags.nemesisPromesa) {
+    delete c.flags.nemesisPromesa;
+    if (o.goals > 0) { add(c, "fame", 6); notes.push(`⚔️ Le respondiste a ${c.nemesis!.name} en la cancha (+6 fama)`); }
+    else { add(c, "fame", -3); notes.push(`⚔️ Prometiste responderle a ${c.nemesis!.name} en la cancha... y no pasó nada (−3 fama)`); }
+  }
+
+  if (o.pep === "arengar") { add(c, "coach", 2); notes.push("📣 Tu arenga en el vestuario le gustó al DT"); }
+  if (o.pep === "provocar") {
+    if (o.goals > 0) { add(c, "fame", 4); add(c, "morale", 3); notes.push("😏 Provocaste al rival y lo bancaste con goles (+fama)"); }
+    else if (mine < theirs) { add(c, "fame", -3); add(c, "morale", -4); notes.push("😬 Provocaste al rival y perdiste. Los memes no perdonan"); }
+  }
+
+  for (const ch of c.challenges ?? []) {
+    if (ch.done || cnt(c, ch.key) - ch.start < ch.target) continue;
+    ch.done = true;
+    const money = Math.max(20, c.contract.salary * 6);
+    p.money += money;
+    p.points += 2;
+    notes.push(`🎯 ¡Desafío cumplido: ${ch.text}! +€${money}k y +2 puntos`);
+  }
+}
+
+export const challengeProgress = (c: Career, ch: Challenge) => Math.min(ch.target, cnt(c, ch.key) - ch.start);
+
+// ---------- Desafíos de la temporada ----------
+const CHALLENGE_POOL: { id: string; key: string; text: (n: number) => string; n: (c: Career) => number; need?: (c: Career) => boolean }[] = [
+  { id: "goles", key: "goals", text: (n) => `Hacé ${n} goles`, n: (c) => Math.max(3, Math.round(c.seasonLen * ({ DC: 0.45, EXT: 0.3, ENG: 0.2 } as Record<string, number>)[c.player.pos])) },
+  { id: "asist", key: "assists", text: (n) => `Dá ${n} asistencias`, n: (c) => Math.max(2, Math.round(c.seasonLen * ({ DC: 0.12, EXT: 0.25, ENG: 0.3 } as Record<string, number>)[c.player.pos])) },
+  { id: "libre", key: "libre", text: () => "Meté un gol de tiro libre", n: () => 1 },
+  { id: "vaselina", key: "vaselina", text: () => "Hacé un gol de vaselina", n: () => 1 },
+  { id: "comba", key: "comba", text: (n) => `Hacé ${n} goles con comba`, n: () => 2 },
+  { id: "cabeza", key: "cabeza", text: (n) => `Hacé ${n} goles de cabeza`, n: () => 2, need: (c) => c.player.pos === "DC" },
+  { id: "clasico", key: "derbies", text: () => "Ganá un clásico", n: () => 1, need: (c) => CLUBS.some((x) => !!derbyName(c.clubId, x.id)) },
+  { id: "nota8", key: "nota8", text: (n) => `Terminá ${n} partidos con nota 8 o más`, n: () => 3 },
+  { id: "cano", key: "cano", text: (n) => `Tirá ${n} caños`, n: () => 3, need: (c) => c.player.level >= 3 },
+  { id: "nemesis", key: "nemesis", text: () => "Ganale un partido a tu némesis", n: () => 1, need: (c) => !!c.nemesis && club(c.nemesis.clubId).league === club(c.clubId).league },
+];
+
+function assignChallenges(c: Career) {
+  c.counters ??= {};
+  const pool = shuffle(CHALLENGE_POOL.filter((x) => !x.need || x.need(c)));
+  c.challenges = pool.slice(0, 3).map((x) => {
+    const n = x.n(c);
+    return { id: x.id, text: x.text(n), key: x.key, target: n, start: cnt(c, x.key), done: false };
+  });
+}
+
+// ---------- Logros ----------
+export const ACHIEVEMENTS: { id: string; emoji: string; name: string; desc: string; test: (c: Career) => boolean }[] = [
+  { id: "gol1", emoji: "🎯", name: "Primer grito", desc: "Tu primer gol como profesional", test: (c) => c.totals.goals >= 1 },
+  { id: "hat", emoji: "🎩", name: "Hat-trick", desc: "Tres goles en un partido", test: (c) => cnt(c, "hat") >= 1 },
+  { id: "g100", emoji: "💯", name: "Centenario", desc: "100 goles en tu carrera", test: (c) => c.totals.goals >= 100 },
+  { id: "g250", emoji: "👑", name: "Leyenda del gol", desc: "250 goles en tu carrera", test: (c) => c.totals.goals >= 250 },
+  { id: "libre5", emoji: "🧱", name: "Especialista", desc: "5 goles de tiro libre", test: (c) => cnt(c, "libre") >= 5 },
+  { id: "vaselina", emoji: "🪶", name: "Por arriba", desc: "Un gol de vaselina", test: (c) => cnt(c, "vaselina") >= 1 },
+  { id: "comba5", emoji: "🌀", name: "Al ángulo", desc: "5 goles con comba", test: (c) => cnt(c, "comba") >= 5 },
+  { id: "cabeza10", emoji: "🧠", name: "Cabeceador", desc: "10 goles de cabeza", test: (c) => cnt(c, "cabeza") >= 10 },
+  { id: "chilena", emoji: "🤸", name: "De película", desc: "Un gol de chilena", test: (c) => cnt(c, "chilena") >= 1 },
+  { id: "cano10", emoji: "🦵", name: "Caño tras caño", desc: "10 caños", test: (c) => cnt(c, "cano") >= 10 },
+  { id: "decisivo", emoji: "🧊", name: "Sangre fría", desc: "Meter el penal decisivo de una tanda", test: (c) => cnt(c, "decisivo") >= 1 },
+  { id: "clasico", emoji: "🔥", name: "Dueño del clásico", desc: "Ganar un clásico", test: (c) => cnt(c, "derbies") >= 1 },
+  { id: "clasico10", emoji: "🌋", name: "Rey de los clásicos", desc: "Ganar 10 clásicos", test: (c) => cnt(c, "derbies") >= 10 },
+  { id: "nemesis5", emoji: "⚔️", name: "Duelo ganado", desc: "Ganarle 5 veces a tu némesis", test: (c) => cnt(c, "nemesis") >= 5 },
+  { id: "nota8", emoji: "📈", name: "Figura", desc: "10 partidos con nota 8 o más", test: (c) => cnt(c, "nota8") >= 10 },
+  { id: "idolo", emoji: "🎶", name: "Ídolo", desc: "Ser ídolo de un club", test: (c) => (c.idols ?? []).length >= 1 },
+  { id: "fiel", emoji: "🏟️", name: "Un solo amor", desc: "10 temporadas en el mismo club", test: (c) => Object.values(c.bond ?? {}).some((b) => b.seasons >= 10) },
+  { id: "mundo", emoji: "🌍", name: "Trotamundos", desc: "Jugar en 3 ligas distintas", test: (c) => new Set([...c.history.map((h) => club(h.clubId).league), club(c.clubId).league]).size >= 3 },
+  { id: "champions", emoji: "⭐", name: "Noche europea", desc: "Ganar la Champions League", test: (c) => c.trophies.some((t) => t.includes("Champions League")) },
+  { id: "balon", emoji: "🥇", name: "El mejor del mundo", desc: "Ganar el Balón de Oro", test: (c) => c.player.ballonDor >= 1 },
+];
+
+function checkAchievements(c: Career, notes: string[], reward = true) {
+  for (const a of ACHIEVEMENTS) {
+    if (c.achievements!.includes(a.id) || !a.test(c)) continue;
+    c.achievements!.push(a.id);
+    if (!reward) continue;
+    c.player.points += 2;
+    notes.push(`🏅 Logro desbloqueado: ${a.emoji} ${a.name} (+2 puntos)`);
+  }
+}
+
+// ---------- Entrenamiento especial (minijuego) ----------
+export const drillDone = (c: Career) => c.drillSlot === c.slot;
+export function drillReward(c: Career, score: number): string {
+  if (drillDone(c)) return "Ya hiciste el entrenamiento especial esta semana.";
+  c.drillSlot = c.slot;
+  const p = c.player;
+  const k: StatKey = p.focus === "descanso" ? pick(STAT_KEYS) : p.focus;
+  const gain = Math.min(1.2, score * 0.08);
+  p.train[k] = (p.train[k] ?? 0) + gain;
+  let ups = 0;
+  while (p.train[k] >= 1 && p.stats[k] < 99) { p.train[k] -= 1; p.stats[k]++; ups++; }
+  p.xp += score * 8;
+  while (p.xp >= xpNeeded(p.level)) { p.xp -= xpNeeded(p.level); p.level++; p.points += 4; }
+  p.energy = clamp(p.energy - 4, 5, 100);
+  if (!score) return "Hoy no salió nada. El preparador te mira serio: \"Mañana de nuevo\".";
+  return `${score} puntos: +${Math.round(gain * 100)}% de ${STAT_INFO[k].name}${ups ? ` y ¡subiste ${STAT_INFO[k].name} a ${p.stats[k]}!` : ""} · +${score * 8} XP`;
+}
+
+// ---------- Planteles ----------
+export type SquadPos = "ARQ" | "DEF" | "MED" | "DEL";
+export type SquadPlayer = { name: string; pos: SquadPos; num: number; age: number; ovr: number; tag?: "vos" | "estrella" | "fichaje" | "rival" | "nemesis"; note?: string; starter?: boolean; value: number; pj: number; goals: number; assists: number };
+export const SQUAD_POS: Record<SquadPos, { name: string; color: string }> = {
+  ARQ: { name: "Arquero", color: "#f59e0b" },
+  DEF: { name: "Defensor", color: "#3b82f6" },
+  MED: { name: "Mediocampista", color: "#10b981" },
+  DEL: { name: "Delantero", color: "#ef4444" },
+};
+// 1-4-3-3 titular + suplentes
+const TEMPLATE: SquadPos[] = ["ARQ", "DEF", "DEF", "DEF", "DEF", "MED", "MED", "MED", "DEL", "DEL", "DEL", "ARQ", "DEF", "DEF", "DEF", "MED", "MED", "MED", "DEL", "DEL", "ARQ", "DEF", "MED"];
+const FORMATION: Record<SquadPos, number> = { ARQ: 1, DEF: 4, MED: 3, DEL: 3 };
+const MY_POS: Record<Pos, SquadPos> = { DC: "DEL", EXT: "DEL", ENG: "MED" };
+const ageCurve = (a: number) => (a <= 19 ? -5 : a <= 22 ? -2 : a <= 29 ? 0 : a <= 32 ? -1 : -4);
+
+function addSigning(c: Career, clubId: string, name: string, from: string, ovrV: number): Signing {
+  const sg: Signing = { name, pos: pick(["DEF", "MED", "MED", "DEL", "DEL"] as SquadPos[]), ovr: clamp(ovrV, 40, 96), age: randInt(21, 29), from, season: c.season };
+  const list = ((c.signings ??= {})[clubId] ??= []);
+  list.push(sg);
+  if (list.length > 8) list.shift();
+  return sg;
+}
+
+/** Plantel del club: se genera siempre igual para cada club, pero los jugadores envejecen, se renuevan y
+ *  su nivel sigue a la fuerza actual del club. Suma fichajes, ventas, a vos, tu rival y tu némesis. */
+export function squadOf(c: Career, clubId: string): SquadPlayer[] {
+  const cl = club(clubId);
+  const region = league(cl.league)?.region ?? "eu";
+  const str = cl.strength;
+  const sold = new Set(c.sold?.[clubId] ?? []);
+  const out: Omit<SquadPlayer, "value" | "pj" | "goals" | "assists">[] = [];
+  const used = new Set<number>();
+  const takeNum = (want: number) => {
+    let n = want;
+    while (used.has(n)) n = n >= 40 ? 1 : n + 1;
+    used.add(n);
+    return n;
+  };
+  if (clubId === c.clubId) used.add(c.player.number);
+  const names = new Set<string>([cl.star]);
+
+  TEMPLATE.forEach((pos, i) => {
+    const r = seeded(`${clubId}:${i}`);
+    const span = 5 + Math.floor(r() * 7); // cuántas temporadas se queda cada jugador en ese lugar
+    const phase = Math.floor(r() * span);
+    const gen = Math.floor((c.season + phase) / span);
+    const g = seeded(`${clubId}:${i}:${gen}`);
+    const startAge = 18 + Math.floor(g() * 9);
+    const age = startAge + ((c.season + phase) % span);
+    const star = i === 9;
+    let name = star ? cl.star : randomName(region, g);
+    for (let k = 0; !star && k < 8 && (names.has(name) || name === cl.star); k++) name = randomName(region, g);
+    if (!star && names.has(name)) name += " Jr.";
+    names.add(name);
+    if (sold.has(name)) return;
+    const slotOff = star ? 5 : i < 11 ? 2 - Math.floor(g() * 6) : -4 - Math.floor(g() * 8);
+    const ovrV = clamp(Math.round(str + slotOff + ageCurve(age) + (g() - 0.5) * 4), 38, 97);
+    const want = pos === "ARQ" ? (i === 0 ? 1 : i === 11 ? 12 : 25) : star ? 9 : 2 + Math.floor(g() * 30);
+    out.push({ name, pos, age: star ? 27 : age, ovr: ovrV, num: takeNum(want), tag: star ? "estrella" : undefined });
+  });
+
+  for (const sg of c.signings?.[clubId] ?? []) {
+    if (sold.has(sg.name)) continue;
+    const age = sg.age + (c.season - sg.season);
+    if (age > 34) continue;
+    out.push({ name: sg.name, pos: sg.pos, age, ovr: sg.ovr, num: takeNum(2 + (sg.name.length * 7) % 30), tag: "fichaje", note: `Llegó en T${sg.season} desde ${club(sg.from).short}` });
+  }
+  if (clubId === c.clubId) {
+    out.push({ name: myName(c), pos: MY_POS[c.player.pos], age: c.player.age, ovr: ovr(c), num: c.player.number, tag: "vos", note: matchRole(c).why });
+    if (c.rival) out.push({ name: c.rival.name, pos: MY_POS[c.player.pos], age: 20 + (c.rival.name.length % 10), ovr: c.rival.ovr, num: takeNum(c.rival.name.length + 7), tag: "rival", note: "Te pelea el puesto" });
+  }
+  const nm = c.nemesis;
+  if (nm && nm.clubId === clubId) out.push({ name: nm.name, pos: "DEL", age: c.player.age + 1, ovr: nm.ovr, num: takeNum(nm.num), tag: "nemesis", note: "Tu némesis" });
+
+  // titulares: los mejores de cada línea según el 1-4-3-3 (vos siempre si tu DT te pone)
+  const byPos = (p: SquadPos) => out.filter((x) => x.pos === p).sort((a, b) => b.ovr - a.ovr);
+  const iStart = clubId === c.clubId && matchRole(c).role === "titular";
+  for (const p of Object.keys(FORMATION) as SquadPos[]) {
+    const line = byPos(p);
+    const meIn = line.find((x) => x.tag === "vos");
+    const picks = line.filter((x) => x.tag !== "vos").slice(0, FORMATION[p] - (meIn && iStart ? 1 : 0));
+    for (const x of picks) x.starter = true;
+    if (meIn && iStart) meIn.starter = true;
+  }
+  const order: SquadPos[] = ["ARQ", "DEF", "MED", "DEL"];
+  const full = withSeasonStats(c, clubId, out);
+  return full.sort((a, b) => Number(!!b.starter) - Number(!!a.starter) || order.indexOf(a.pos) - order.indexOf(b.pos) || b.ovr - a.ovr);
+}
+
+/** Valor de mercado (en miles de €) con la misma fórmula que el tuyo. */
+export const playerValue = (o: number, age: number, star = false) =>
+  Math.round(250 * Math.pow(1.17, o - 50) * (age <= 21 ? 1.25 : age <= 26 ? 1.1 : age <= 30 ? 0.85 : 0.5) * (star ? 1.35 : 1) / 50) * 50;
+
+/** Reparte los goles reales del club en la liga entre sus jugadores (la figura y vos usan sus goles de verdad). */
+function withSeasonStats(c: Career, clubId: string, list: Omit<SquadPlayer, "value" | "pj" | "goals" | "assists">[]): SquadPlayer[] {
+  const cl = club(clubId);
+  const ls = c.leagues[cl.league];
+  const row = ls?.table[clubId];
+  const teamPj = row?.pj ?? 0;
+  const gf = row?.gf ?? 0;
+  const fixed = (x: (typeof list)[number]) => {
+    if (x.tag === "vos") return { pj: Math.min(teamPj, c.seasonStats.pj), goals: c.seasonStats.leagueGoals, assists: Math.min(c.seasonStats.assists, Math.round(gf * 0.7)) };
+    if (x.tag === "estrella") return { goals: ls?.scorers[x.name] ?? 0 };
+    if (x.tag === "nemesis") return { goals: c.nemesis?.seasonGoals ?? 0 };
+    return null;
+  };
+  const res = list.map((x) => {
+    const r = seeded(`${clubId}:${x.name}:${c.season}`);
+    const pj = x.starter ? Math.max(0, teamPj - Math.floor(r() * 3)) : Math.round(teamPj * (0.15 + r() * 0.45));
+    return { ...x, value: playerValue(x.ovr, x.age, x.tag === "estrella"), pj: Math.min(pj, teamPj), goals: 0, assists: 0, w: r(), ...fixed(x) };
+  });
+  const share = (total: number, key: "goals" | "assists", posW: Record<SquadPos, number>) => {
+    const free = res.filter((x) => !(key === "goals" ? ["vos", "estrella", "nemesis"] : ["vos"]).includes(x.tag ?? ""));
+    const taken = res.reduce((a, x) => a + (free.includes(x) ? 0 : x[key]), 0);
+    let left = Math.max(0, total - taken);
+    const ws = free.map((x) => posW[x.pos] * (x.pj / Math.max(1, teamPj)) * (0.4 + x.w) * Math.pow(1.04, x.ovr - 70));
+    const sum = ws.reduce((a, b) => a + b, 0);
+    if (!sum) return;
+    const raw = ws.map((w) => (w / sum) * left);
+    free.forEach((x, i) => { x[key] = Math.floor(raw[i]); left -= x[key]; });
+    const order = raw.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]);
+    for (let k = 0; k < left && k < order.length; k++) free[order[k][1]][key]++;
+  };
+  share(gf, "goals", { ARQ: 0, DEF: 0.5, MED: 1.5, DEL: 3.2 });
+  share(Math.round(gf * 0.7), "assists", { ARQ: 0.05, DEF: 0.9, MED: 2.6, DEL: 1.5 });
+  return res.map(({ w: _w, ...x }) => x);
+}

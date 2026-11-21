@@ -1,22 +1,23 @@
 import { useRef, useState } from "react";
-import { club } from "./game/data";
+import { applyPower, club } from "./game/data";
 import {
-  buy, closeWindow, endSeason, equip, finishMatch, importCareer, loadSlot, openSummerWindow, resolveEvent, retire, save, signFor, simulateMine, startNextSeason, wipeSlot,
+  buy, closeWindow, drillReward, hireAgent, endSeason, equip, finishMatch, importCareer, loadSlot, openSummerWindow, resolveEvent, retire, save, signFor, simulateMine, startNextSeason, wipeSlot,
   type Career, type MatchOutcome, type Offer, type Report, type SeasonSummary,
 } from "./game/career";
 import { useClubTheme } from "./ui/common";
 import Creator from "./ui/Creator";
 import Hub, { type HubActions } from "./ui/Hub";
-import MatchScreen, { PracticeScreen } from "./ui/MatchScreen";
+import MatchScreen, { DrillScreen, PracticeScreen } from "./ui/MatchScreen";
 import { EventScreen, GalaScreen, MarketScreen, ResultScreen, RetiredScreen, SeasonEndScreen, TitleScreen } from "./ui/Screens";
 
-type Screen = "title" | "create" | "hub" | "match" | "result" | "event" | "market" | "season" | "gala" | "retired" | "practice";
+type Screen = "title" | "create" | "hub" | "match" | "result" | "event" | "market" | "season" | "gala" | "retired" | "practice" | "drill";
 
 export default function App() {
   const [career, setCareerState] = useState<Career | null>(null);
   const ref = useRef<Career | null>(null);
   const setCareer = (c: Career | null) => {
     ref.current = c;
+    applyPower(c?.power); // cada partida tiene su propio mundo: la fuerza de los clubes viaja con ella
     setCareerState(c);
   };
   const [screen, setScreen] = useState<Screen>("title");
@@ -114,6 +115,8 @@ export default function App() {
       }
     },
     onDelete: () => { if (ref.current) wipeSlot(ref.current.slotId); toTitle(); },
+    onDrill: () => setScreen("drill"),
+    onAgent: (id) => { let msg = ""; mutate((n) => { msg = hireAgent(n, id); }); return msg; },
   };
 
   if (screen === "title" || (!career && screen !== "create")) {
@@ -156,6 +159,8 @@ export default function App() {
   switch (screen) {
     case "practice":
       return <PracticeScreen c={c} onExit={() => setScreen("hub")} />;
+    case "drill":
+      return <DrillScreen c={c} onDone={(score) => { let msg = ""; mutate((n) => { msg = drillReward(n, score); }); return msg; }} onExit={() => setScreen("hub")} />;
     case "match":
       return <MatchScreen key={`${c.season}-${c.slot}`} c={c} mode={c.player.injured > 0 ? "simular" : mode} onDone={matchDone} />;
     case "result":

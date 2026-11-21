@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { club, clubsOf, pick, rand, randInt, type Team } from "../game/data";
-import { backgroundScore, effStats, matchInfo, matchRole, playedRating, rivalLevel, simulateMine, type Career, type MatchOutcome } from "../game/career";
+import { STAT_INFO, club, clubsOf, pick, rand, randInt, type Team } from "../game/data";
+import { backgroundScore, crowdContext, drillDone, effStats, matchInfo, matchRole, myName, playedRating, rivalLevel, simulateMine, unlockedMoves, type Career, type MatchOutcome, type Pep } from "../game/career";
 import { Arcade, type PlayKind, type PlayOutcome, type PlayResult, type Weather } from "../game/match";
 import { sfx } from "../game/audio";
+import { settings, tutorialOn, tutorialPlayed } from "../game/settings";
 import { Avatar, Btn, Crest } from "./common";
 
 type Ev = { min: number; kind: "play" | "mine" | "theirs" | "talk"; play?: PlayKind };
@@ -93,11 +94,29 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
   const [play, setPlay] = useState<{ kind: PlayKind; epic: boolean; min: number; decisive?: boolean } | null>(null);
   const [fast, setFast] = useState(false);
   const [ended, setEnded] = useState(false);
-  const st = useRef({ idx: 0, minute: 0, mine: 0, theirs: 0, goals: 0, assists: 0, good: 0, bad: 0, epicDone: false, paused: false, finished: false, pensWin: undefined as boolean | undefined, pensDone: false });
+  const [pep, setPep] = useState<Pep | null>(null);
+  const cc = useMemo(() => crowdContext(c, m), [c, m]);
+  const nick = (c.player.nick || c.player.name).toUpperCase();
+  const stands = useMemo(() => {
+    if (cc.idol && m.isHome) return { banners: [{ text: `${nick} ${c.player.number}`, c1: me.c1, c2: me.c2 }, { text: "¡ÍDOLO!", c1: me.c2, c2: me.c1 }, { text: `${nick} ES NUESTRO`, c1: me.c1, c2: me.c2 }], boo: false };
+    if (cc.vsTraitor && !m.isHome) return { banners: [{ text: "TRAIDOR 🐍", c1: rv.c1, c2: rv.c2 }, { text: `${nick} MERCENARIO`, c1: rv.c2, c2: rv.c1 }], boo: true };
+    if (cc.vsExIdol && !m.isHome) return { banners: [{ text: `GRACIAS ${nick}`, c1: rv.c1, c2: rv.c2 }], boo: false };
+    return { banners: [], boo: false };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const st = useRef({ kinds: [] as string[], moves: [] as string[], idx: 0, minute: 0, mine: 0, theirs: 0, goals: 0, assists: 0, good: 0, bad: 0, epicDone: false, paused: false, finished: false, pensWin: undefined as boolean | undefined, pensDone: false });
   const fastRef = useRef(false);
   fastRef.current = fast;
 
   const push = (f: Feed) => setFeed((x) => [f, ...x].slice(0, 14));
+
+  // La hinchada alienta todo el partido (más fuerte en clásicos y mata-mata).
+  useEffect(() => {
+    if (!settings().chants) return;
+    sfx.chantStart(m.derby ? 1.35 : m.knockout ? 1.2 : 1);
+    return () => sfx.chantStop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (phase !== "live") return;
@@ -108,7 +127,7 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
     const simGoals = sim ? buildSimTimeline(sim, m.isHome) : [];
     if (mode === "jugar" && role.role === "suplente") push({ min: 0, text: `Arrancás en el banco: ${role.why}`, tone: "neutral" });
     const tick = (now: number) => {
-      const dt = (now - last) / 1000;
+      const dt = Math.min(0.1, (now - last) / 1000); // al volver de otra pestaña no salta medio partido
       last = now;
       const s = st.current;
       if (!s.paused && !s.finished) {
@@ -122,7 +141,7 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
             else s.theirs++;
             setScore({ mine: s.mine, theirs: s.theirs });
             push({ min: g.min, text: g.mine ? `¡Gol de ${me.short}!` : `Gol de ${rv.short}`, tone: g.mine ? "good" : "bad" });
-            if (g.mine) sfx.goal();
+            if (g.mine) { sfx.goal(); sfx.chantBoost(8); }
           }
         } else {
           while (s.idx < plan.length && plan[s.idx].min <= s.minute) {
@@ -132,6 +151,7 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
               setScore({ mine: s.mine, theirs: s.theirs });
               push({ min: ev.min, text: `¡Gol de ${me.star}! ${me.short} lo celebra`, tone: "good" });
               sfx.goal();
+              sfx.chantBoost(8);
             } else if (ev.kind === "theirs") {
               s.theirs++;
               setScore({ mine: s.mine, theirs: s.theirs });
@@ -185,9 +205,11 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
     const cur = play!;
     s.good += r.good;
     s.bad += r.bad;
+    s.moves.push(...(r.moves ?? []));
     if (cur.decisive) {
       // penal decisivo: si lo metés, tu equipo gana la tanda (casi siempre)
       const scored = r.outcome === "gol";
+      if (scored) s.kinds.push("decisivo");
       s.pensWin = scored ? rand() < 0.85 : rand() < 0.2;
       if (scored) { s.good += 1; sfx.goal(); }
       push({ min: "P", text: scored ? (s.pensWin ? "¡LO METISTE! ¡Pasan por penales!" : "Lo metiste... pero fallaron otros. Eliminados.") : s.pensWin ? "Lo erraste, ¡pero el arquero salvó la tanda!" : "Erraste el penal decisivo...", tone: s.pensWin ? "big" : "bad" });
@@ -207,6 +229,7 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
       golrival: [`Gol de ${rv.name} en la contra...`, "bad"],
       posesion: ["¡Olé, olé! Toque y toque en mitad de cancha", "good"],
     };
+    s.kinds.push(...(r.kinds ?? []));
     if (r.outcome === "gol") { s.goals++; s.mine++; }
     if (r.outcome === "asist") { s.assists++; s.mine++; }
     if (r.outcome === "tiempo" && cur.kind !== "defensa") s.bad += 0.5;
@@ -228,10 +251,21 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
     }
     const hg = m.isHome ? s.mine : s.theirs;
     const ag = m.isHome ? s.theirs : s.mine;
-    onDone({ played: true, hg, ag, goals: s.goals, assists: s.assists, rating: playedRating(s.goals, s.assists, s.good, s.bad, s.mine - s.theirs), pensWin: s.pensWin });
+    onDone({ played: true, hg, ag, goals: s.goals, assists: s.assists, rating: playedRating(s.goals, s.assists, s.good, s.bad, s.mine - s.theirs), pensWin: s.pensWin, kinds: s.kinds, moves: s.moves, pep: pep ?? undefined });
   }
 
-  if (phase === "intro") return <Walkout c={c} home={m.home} away={m.away} label={m.label} weather={weather} role={role} onGo={() => setPhase("live")} />;
+  if (phase === "intro")
+    return (
+      <Walkout
+        c={c} home={m.home} away={m.away} label={m.label} derby={m.derby} weather={weather} role={role}
+        crowd={cc.idol && m.isHome ? "🎶 La hinchada canta tu nombre" : cc.vsTraitor ? (m.isHome ? "😤 Hoy enfrentás al club que dejaste por su rival" : "😡 La tribuna te espera con silbidos") : cc.vsExIdol ? "👏 Volvés a enfrentar al club donde sos ídolo" : m.nemesis ? `⚔️ Enfrente está tu némesis: ${c.nemesis!.name}` : null}
+        pepOn={m.big} pep={pep} onPep={setPep}
+        onGo={() => setPhase("live")}
+      />
+    );
+
+  const s = st.current;
+  const liveRating = mode === "jugar" && !injured ? playedRating(s.goals, s.assists, s.good, s.bad, s.mine - s.theirs) : null;
 
   const [left, right] = m.isHome ? [me, rv] : [rv, me];
   const [ls, rs] = m.isHome ? [score.mine, score.theirs] : [score.theirs, score.mine];
@@ -242,9 +276,15 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
         <TeamBadge t={left} />
         <div className="text-center">
           <div className="mb-1 text-[10px] font-black uppercase tracking-widest text-white/50">{m.label}</div>
+          {m.derby && <div className="mb-1 inline-block rounded-full bg-orange-500 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-white">🔥 {m.derby}</div>}
           <div className="title-font text-5xl tabular-nums">{ls} - {rs}</div>
           <div className="mt-1 inline-block rounded-full bg-emerald-500 px-3 py-0.5 text-sm font-black text-slate-900 tabular-nums">{ended ? "FINAL" : `${minute}'`}</div>
           <div className="mt-1 text-xs text-white/50">{WEATHER_TXT[weather]}</div>
+          {liveRating !== null && (
+            <div className="mt-1 text-xs font-bold text-white/70" title="Tu nota sube con goles, asistencias y buenas jugadas">
+              Tu nota: <span className={`font-black tabular-nums ${liveRating >= 7 ? "text-emerald-300" : liveRating < 5.5 ? "text-rose-300" : "text-white"}`}>{liveRating.toFixed(1)}</span>
+            </div>
+          )}
         </div>
         <TeamBadge t={right} />
       </div>
@@ -274,7 +314,7 @@ export default function MatchScreen({ c, mode, onDone }: { c: Career; mode: "jug
         )
       )}
 
-      {play && <PlayLayer c={c} kind={play.kind} epic={play.epic} decisive={play.decisive} minute={play.min} me={me} rv={rv} home={m.home} weather={weather} onEnd={playEnded} />}
+      {play && <PlayLayer c={c} kind={play.kind} epic={play.epic} decisive={play.decisive} minute={play.min} me={me} rv={rv} home={m.home} weather={weather} derby={m.derby} pep={pep} banners={stands.banners} boo={stands.boo} onEnd={playEnded} />}
     </div>
   );
 }
@@ -300,7 +340,13 @@ function TeamBadge({ t }: { t: Team }) {
 
 // ---------- Salida de los equipos ----------
 
-function Walkout({ c, home, away, label, weather, role, onGo }: { c: Career; home: Team; away: Team; label: string; weather: Weather; role: { role: string; why: string }; onGo: () => void }) {
+const PEPS: { id: Pep; emoji: string; name: string; hint: string }[] = [
+  { id: "concentrar", emoji: "🧘", name: "Concentrarme", hint: "Rematás y pasás más preciso" },
+  { id: "arengar", emoji: "📣", name: "Arengar al plantel", hint: "El rival se achica · le gusta al DT" },
+  { id: "provocar", emoji: "😏", name: "Provocar al rival", hint: "Rival más duro · si hacés un gol, +fama; si perdés, −fama" },
+];
+
+function Walkout({ c, home, away, label, derby, weather, role, crowd, pepOn, pep, onPep, onGo }: { c: Career; home: Team; away: Team; label: string; derby: string | null; weather: Weather; role: { role: string; why: string }; crowd: string | null; pepOn: boolean; pep: Pep | null; onPep: (p: Pep) => void; onGo: () => void }) {
   const cur = c.schedule[c.slot];
   const myTeam = club(cur?.kind === "cup" && cur.cup === "nac" ? c.player.nation : c.clubId);
   useEffect(() => {
@@ -314,7 +360,8 @@ function Walkout({ c, home, away, label, weather, role, onGo }: { c: Career; hom
   return (
     <div className="relative flex min-h-dvh flex-col items-center justify-center gap-6 overflow-hidden px-4 py-8 text-center" style={{ background: weather === "noche" ? "radial-gradient(circle at 50% 0%, #1e3a8a 0%, #020617 70%)" : weather === "lluvia" ? "linear-gradient(#334155, #0f172a)" : `radial-gradient(circle at 50% 0%, ${home.c1}99 0%, #0b1d12 70%)` }}>
       <div className="pop text-xs font-black uppercase tracking-[0.3em] text-white/70">{label}</div>
-      <div className="pop title-font text-3xl sm:text-5xl">¡SALEN LOS EQUIPOS!</div>
+      {derby && <div className="pop rounded-full bg-orange-500 px-4 py-1 text-sm font-black uppercase tracking-widest shadow-lg">🔥 {derby}</div>}
+      <div className="pop title-font text-3xl sm:text-5xl">{derby ? "¡SE JUEGA EL CLÁSICO!" : "¡SALEN LOS EQUIPOS!"}</div>
       <div className="text-sm text-white/70">{home.stadium} · {WEATHER_TXT[weather]}</div>
       <div className="flex items-center gap-4 sm:gap-10">
         <div className="rise flex flex-col items-center gap-2" style={{ animationDelay: ".1s" }}>
@@ -333,6 +380,20 @@ function Walkout({ c, home, away, label, weather, role, onGo }: { c: Career; hom
       <div className={`rise rounded-xl px-4 py-2 text-sm font-bold ${role.role === "titular" ? "bg-emerald-500/20 text-emerald-100" : "bg-orange-500/20 text-orange-100"}`} style={{ animationDelay: ".5s" }}>
         {role.role === "titular" ? "✅ Titular" : "🪑 Suplente"} · {role.why}
       </div>
+      {crowd && <div className="rise rounded-xl bg-white/10 px-4 py-2 text-sm font-black" style={{ animationDelay: ".55s" }}>{crowd}</div>}
+      {pepOn && (
+        <div className="rise w-full max-w-md" style={{ animationDelay: ".6s" }}>
+          <div className="mb-2 text-xs font-black uppercase tracking-widest text-white/60">En el vestuario, antes de salir...</div>
+          <div className="grid gap-2">
+            {PEPS.map((x) => (
+              <button key={x.id} onClick={() => { sfx.click(); onPep(x.id); }} className={`flex items-center gap-3 rounded-xl px-3 py-2 text-left ${pep === x.id ? "bg-[var(--c1)] text-[var(--ink1)]" : "bg-white/10 hover:bg-white/15"}`}>
+                <span className="text-2xl">{x.emoji}</span>
+                <span><span className="block text-sm font-black">{x.name}</span><span className="block text-xs opacity-70">{x.hint}</span></span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <Btn kind="gold" className="w-full max-w-xs py-5 text-2xl" onClick={onGo}>¡AL CAMPO! ⚽</Btn>
     </div>
   );
@@ -340,10 +401,12 @@ function Walkout({ c, home, away, label, weather, role, onGo }: { c: Career; hom
 
 // ---------- Capa de la jugada ----------
 
-export function PlayLayer({ c, kind, epic, decisive, minute, me, rv, home, weather, onEnd, onExit }: { c: Career; kind: PlayKind; epic: boolean; decisive?: boolean; minute: number; me: Team; rv: Team; home: Team; weather: Weather; onEnd: (r: PlayResult) => void; onExit?: () => void }) {
+export function PlayLayer({ c, kind, epic, decisive, minute, me, rv, home, weather, derby = null, pep = null, banners, boo, drill, onEnd, onExit }: { c: Career; kind: PlayKind; epic: boolean; decisive?: boolean; minute: number; me: Team; rv: Team; home: Team; weather: Weather; derby?: string | null; pep?: Pep | null; banners?: { text: string; c1: string; c2: string }[]; boo?: boolean; drill?: boolean; onEnd: (r: PlayResult) => void; onExit?: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const arcade = useRef<Arcade | null>(null);
   const touch = useMemo(isTouch, []);
+  const tutorial = useMemo(() => kind !== "practica" && !onExit && tutorialOn(), [kind, onExit]);
+  const [paused, setPaused] = useState(false);
   const endRef = useRef(onEnd);
   endRef.current = onEnd;
 
@@ -354,18 +417,34 @@ export function PlayLayer({ c, kind, epic, decisive, minute, me, rv, home, weath
         kind, epic, decisive, minute,
         look: c.player.look,
         num: c.player.number,
-        stats: effStats(c, true),
+        stats: (() => {
+          const st = { ...effStats(c, true) };
+          if (pep === "concentrar") { st.tiro = Math.min(99, st.tiro + 4); st.pase = Math.min(99, st.pase + 3); }
+          return st;
+        })(),
         kit: { c1: me.c1, c2: me.c2 },
         rivalKit: rivalKit(me, rv),
-        rival: kind === "practica" ? 0.35 : rivalLevel(c),
+        rival: kind === "practica" ? 0.35 : Math.max(0, Math.min(1, rivalLevel(c) + (pep === "arengar" ? -0.06 : pep === "provocar" ? 0.08 : 0))),
         energy: c.player.energy,
         celebration: c.player.celebration,
         rivalSeed: `${rv.id}-${c.season}`,
         crowd: [home.c1, home.c2],
         weather,
+        difficulty: settings().difficulty,
+        derby,
+        tutorial,
+        touch,
+        moves: unlockedMoves(c),
+        drill,
+        banners,
+        boo,
       },
-      (r) => endRef.current(r),
+      (r) => {
+        if (tutorial) tutorialPlayed();
+        endRef.current(r);
+      },
     );
+    a.onPause = setPaused;
     arcade.current = a;
     return () => a.destroy();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -385,6 +464,17 @@ export function PlayLayer({ c, kind, epic, decisive, minute, me, rv, home, weath
         <button className="btn btn-ghost absolute right-3 top-3 px-4 py-2 text-sm" onClick={() => arcade.current?.quit()}>
           Salir ✕
         </button>
+      )}
+      <button aria-label="Pausa" className="btn btn-ghost absolute left-3 top-3 h-10 w-10 p-0 text-lg" onClick={() => arcade.current?.setPaused(true)}>
+        ⏸
+      </button>
+      {paused && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-4 p-6 text-center">
+          <div className="title-font text-5xl">PAUSA</div>
+          <p className="max-w-sm text-sm text-white/70">{touch ? "La jugada te espera." : "Esc o P para seguir. También funciona Start en el joystick."}</p>
+          <Btn kind="gold" className="w-56 py-4 text-xl" onClick={() => arcade.current?.setPaused(false)}>▶ SEGUIR</Btn>
+          {onExit && <Btn kind="ghost" className="w-56 py-3" onClick={() => arcade.current?.quit()}>Salir del entrenamiento</Btn>}
+        </div>
       )}
     </div>
   );
@@ -520,4 +610,38 @@ export function PracticeScreen({ c, onExit }: { c: Career; onExit: () => void })
       </div>
     </>
   );
+}
+
+// ---------- Entrenamiento especial: tiro al blanco ----------
+
+export function DrillScreen({ c, onDone, onExit }: { c: Career; onDone: (score: number) => string; onExit: () => void }) {
+  const me = club(c.clubId);
+  const rv = clubsOf(me.league).find((x) => x.id !== me.id)!;
+  const [msg, setMsg] = useState<{ score: number; text: string } | null>(null);
+  const [started, setStarted] = useState(false);
+  const already = useMemo(() => drillDone(c), [c]);
+  if (msg)
+    return (
+      <div className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-4 text-center">
+        <div className="title-font text-4xl">¡ENTRENAMIENTO CUMPLIDO!</div>
+        <div className="card w-full p-6">
+          <div className="title-font text-6xl text-amber-300">{msg.score}</div>
+          <div className="text-white/60">puntos</div>
+          <p className="mt-3 text-sm font-bold">{msg.text}</p>
+        </div>
+        <Btn kind="gold" className="w-full py-4 text-xl" onClick={onExit}>Volver</Btn>
+      </div>
+    );
+  if (!started)
+    return (
+      <div className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 px-4 text-center">
+        <div className="text-6xl">🎯</div>
+        <div className="title-font text-4xl">TIRO AL BLANCO</div>
+        <p className="text-white/70">Tenés 30 segundos. Cada gol vale 1 punto; si entra en el blanco rojo, 3. Mirá si el blanco está arriba (cargá más) o abajo, y de qué lado.</p>
+        <p className="text-sm text-white/50">Los puntos se suman a lo que estás entrenando esta semana ({c.player.focus === "descanso" ? "una habilidad al azar" : STAT_INFO[c.player.focus].name}).</p>
+        {already ? <p className="rounded-xl bg-white/10 p-3 text-sm font-bold">Ya hiciste el entrenamiento especial esta semana. Volvé después del próximo partido.</p> : <Btn kind="gold" className="w-full py-4 text-xl" onClick={() => setStarted(true)}>¡ARRANCAR!</Btn>}
+        <Btn kind="ghost" className="w-full py-3" onClick={onExit}>Volver</Btn>
+      </div>
+    );
+  return <PlayLayer c={c} kind="practica" drill epic={false} minute={0} me={me} rv={rv} home={me} weather="sol" onEnd={(r) => setMsg({ score: r.drillScore ?? 0, text: onDone(r.drillScore ?? 0) })} onExit={onExit} />;
 }

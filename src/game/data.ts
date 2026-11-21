@@ -513,18 +513,62 @@ export function fmtMoney(k: number) {
 // ---------- Escudos propios (los carga el jugador) ----------
 
 const crestKey = (id: string) => `crack-crest-${id}`;
+// Cache en memoria: las tablas dibujan cientos de escudos y leer localStorage en cada render traba.
+const crestCache = new Map<string, string | null>();
 export function customCrest(id: string): string | null {
+  if (crestCache.has(id)) return crestCache.get(id)!;
+  let v: string | null = null;
   try {
-    return localStorage.getItem(crestKey(id));
+    v = localStorage.getItem(crestKey(id));
   } catch {
-    return null;
+    /* sin almacenamiento */
   }
+  crestCache.set(id, v);
+  return v;
 }
 export function setCustomCrest(id: string, dataUrl: string | null) {
+  crestCache.set(id, dataUrl);
   try {
     if (dataUrl) localStorage.setItem(crestKey(id), dataUrl);
     else localStorage.removeItem(crestKey(id));
   } catch {
     /* sin almacenamiento */
   }
+}
+
+// ---------- Clásicos ----------
+// Rivalidades históricas de cada liga (ids de CLUBS). Un partido entre dos de estos es un clásico.
+const DERBY_LIST: [string, string, string][] = [
+  ["inter", "mil", "Derby della Madonnina"], ["juv", "inter", "Derby d'Italia"], ["rom", "laz", "Derby della Capitale"], ["juv", "tor", "Derby della Mole"], ["gen", "cag", "Clásico isleño"],
+  ["rma", "bar", "El Clásico"], ["rma", "atm", "Derbi madrileño"], ["bet", "sev", "Derbi sevillano"], ["ath", "rso", "Derbi vasco"], ["bar", "esy", "Derbi barceloní"],
+  ["mun", "liv", "Clásico del noroeste"], ["mci", "mun", "Derbi de Manchester"], ["ars", "tot", "Derbi del norte de Londres"], ["liv", "eve", "Derbi de Merseyside"], ["che", "ars", "Derbi de Londres"],
+  ["bay", "bvb", "Der Klassiker"], ["bvb", "boc", "Derbi del Ruhr"], ["svw", "stp", "Derbi del norte"], ["sge", "m05", "Derbi del Rin"],
+  ["psg", "om", "Le Classique"], ["ol", "asse", "Derbi del Ródano"], ["losc", "rcl", "Derbi del norte"], ["ogcn", "asm", "Derbi de la Costa Azul"],
+  ["slb", "scp", "Derbi de Lisboa"], ["fcp", "slb", "O Clássico"], ["fcp", "bvs", "Derbi de Oporto"], ["scb", "vsc", "Derbi del Miño"],
+  ["aja2", "fey", "De Klassieker"], ["psv", "aja2", "Clásico holandés"], ["fey", "spa", "Derbi de Róterdam"],
+  ["gs", "fb", "Kıtalararası Derbi"], ["bjk", "gs", "Derbi de Estambul"], ["fb", "bjk", "Derbi de Estambul"], ["ts", "fb", "Clásico del Mar Negro"],
+  ["riv", "boc2", "Superclásico"], ["rac", "ind", "Clásico de Avellaneda"], ["est2", "gim", "Clásico platense"], ["ros", "nob", "Clásico rosarino"], ["sl", "hur", "Clásico de barrio"], ["tal", "bel", "Clásico cordobés"], ["lan", "ban", "Clásico del sur"],
+  ["fla", "flu", "Fla-Flu"], ["fla", "vas", "Clássico dos Milhões"], ["pal", "cor", "Derby Paulista"], ["gre", "int", "Gre-Nal"], ["cam", "cru", "Clássico Mineiro"], ["spfc", "cor", "Majestoso"], ["bot", "fla", "Clássico da Rivalidade"],
+  ["ame", "gua", "Clásico Nacional"], ["mty", "tig2", "Clásico Regio"], ["ame", "caz", "Clásico Joven"], ["gua", "atl", "Clásico Tapatío"], ["ame", "pum", "Clásico Capitalino"],
+  ["lag", "lafc", "El Tráfico"], ["sea", "por2", "Cascadia Cup"], ["nyrb", "nyc", "Hudson River Derby"], ["mia", "orl", "Derbi de Florida"], ["atx", "hou", "Texas Derby"],
+];
+const DERBIES = new Map<string, string>();
+for (const [a, b, name] of DERBY_LIST) {
+  DERBIES.set(`${a}|${b}`, name);
+  DERBIES.set(`${b}|${a}`, name);
+}
+/** Nombre del clásico entre dos equipos, o null si no lo es. */
+export const derbyName = (a: string, b: string) => DERBIES.get(`${a}|${b}`) ?? null;
+
+// ---------- Fuerza dinámica de los clubes ----------
+/** Fuerza original de cada club (la de fábrica). La partida guarda su propia versión en `Career.power`. */
+export const BASE_STRENGTH: Record<string, number> = Object.fromEntries(CLUBS.map((c) => [c.id, c.strength]));
+/** Pone la fuerza de cada club según la partida activa (o la de fábrica si no hay dato). */
+export function applyPower(power: Record<string, number> | undefined) {
+  for (const c of CLUBS) c.strength = power?.[c.id] ?? BASE_STRENGTH[c.id];
+}
+/** Nombre inventado al azar para fichajes. */
+export function randomName(region: string, r: () => number = rand) {
+  const [a, b] = NAME_POOL[region] ?? NAME_POOL.eu;
+  return `${a[Math.floor(r() * a.length)]} ${b[Math.floor(r() * b.length)]}`;
 }
